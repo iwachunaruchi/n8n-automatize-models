@@ -56,6 +56,7 @@ try:
     from routers.synthetic_data import router as synthetic_data_router
     from routers.files import router as files_router
     from routers.jobs import router as jobs_router
+    from routers.training import router as training_router
     logger.info("✅ Routers importados exitosamente")
     routers_loaded = True
 except ImportError as e:
@@ -121,6 +122,7 @@ if routers_loaded:
     app.include_router(synthetic_data_router)
     app.include_router(files_router)
     app.include_router(jobs_router)
+    app.include_router(training_router)
 else:
     logging.warning("Routers no pudieron ser cargados - funcionando en modo básico")
 
@@ -158,7 +160,7 @@ async def root():
         "device": str(model_state['device']) if model_state['device'] else None,
         "architecture": "✅ Completamente modular" if routers_loaded and services_loaded else "⚠️ Modo básico",
         "services": ["MinIO", "Model", "ImageAnalysis", "SyntheticData"] if services_loaded else ["No disponibles"],
-        "routers": ["Classification", "Restoration", "SyntheticData", "Files", "Jobs"] if routers_loaded else ["No disponibles"]
+        "routers": ["Classification", "Restoration", "SyntheticData", "Files", "Jobs", "Training"] if routers_loaded else ["No disponibles"]
     }
 
 @app.get("/health")
@@ -197,7 +199,8 @@ async def modular_status():
             "restoration": "✅ /restore/* - Restauración de imágenes",
             "synthetic_data": "✅ /synthetic/* - Datos sintéticos", 
             "files": "✅ /files/* - Operaciones con archivos",
-            "jobs": "✅ /jobs/* - Manejo de trabajos"
+            "jobs": "✅ /jobs/* - Manejo de trabajos",
+            "training": "✅ /training/* - Entrenamiento de capas"
         }
     }
 

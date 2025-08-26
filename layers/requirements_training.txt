@@ -1,0 +1,25 @@
+# Requirements para entrenamiento de capas
+# Instalar con: pip install -r requirements_training.txt
+
+# Core ML/DL
+torch>=1.9.0
+torchvision>=0.10.0
+torchaudio>=0.9.0
+
+# Datos y augmentación
+albumentations>=1.3.0
+opencv-python>=4.5.0
+
+# Utilidades
+numpy>=1.21.0
+matplotlib>=3.5.0
+tqdm>=4.62.0
+requests>=2.25.0
+
+# API y async
+fastapi>=0.68.0
+uvicorn>=0.15.0
+
+# Científico
+scikit-learn>=1.0.0
+Pillow>=8.3.0
