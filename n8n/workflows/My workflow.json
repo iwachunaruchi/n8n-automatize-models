@@ -1,51 +1,19 @@
 {
-  "name": "Workflow con el refactor",
+  "name": "My workflow",
   "nodes": [
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "http://doc-restoration-api:8000/files/analyze",
-        "sendBody": true,
-        "contentType": "multipart-form-data",
-        "bodyParameters": {
-          "parameters": [
-            {
-              "parameterType": "formBinaryData",
-              "name": "file",
-              "inputDataFieldName": "File"
-            }
-          ]
-        },
-        "options": {
-          "response": {
-            "response": {
-              "fullResponse": true
-            }
-          }
-        }
-      },
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        -336,
-        464
-      ],
-      "id": "295c33f7-caaa-4099-a4ed-bf2b19f0588f",
-      "name": "Analyze Document Only"
-    },
     {
       "parameters": {
         "respondWith": "json",
         "responseBody": "{\n  \"status\": \"error\",\n  \"message\": \"Only clean documents can generate synthetic training data\",\n  \"classification\": \"={{$('Analyze Document Only').item.json.body.document_type}}\",\n  \"uploaded_to\": \"={{$('Upload to Degraded Bucket').item.json.body.bucket}}\"\n}",
         "options": {}
       },
-      "id": "730f2dd5-e7e8-4884-beed-7595b71f2644",
+      "id": "190fe8f8-af89-421e-abbd-6641b9b701a6",
       "name": "Response - Error (Degraded)",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1,
       "position": [
-        848,
-        832
+        1520,
+        608
       ]
     },
     {
@@ -53,19 +21,19 @@
         "conditions": {
           "string": [
             {
-              "value1": "={{ $json.body.document_type }}",
+              "value1": "={{ $json.document_type }}",
               "value2": "documento_limpio"
             }
           ]
         }
       },
-      "id": "348192a5-7dbf-4145-8f06-28ff0ea7499a",
+      "id": "92141da2-3772-418d-8ac3-82bf22249331",
       "name": "Check if Clean Document",
       "type": "n8n-nodes-base.if",
       "typeVersion": 1,
       "position": [
-        -96,
-        496
+        576,
+        256
       ]
     },
     {
@@ -74,29 +42,14 @@
         "combinationMode": "mergeByPosition",
         "options": {}
       },
-      "id": "f93465f1-e4b3-48cd-b48e-0f09874d59df",
+      "id": "6298d4d3-48d4-4ce6-a29e-d0e3bc7376c5",
       "name": "Merge Original Data",
       "type": "n8n-nodes-base.merge",
       "typeVersion": 2.1,
       "position": [
-        112,
-        624
+        784,
+        400
       ]
-    },
-    {
-      "parameters": {
-        "content": "## Flujo Corregido\n\n✅ **Pasos:**\n\n1. **Analyze Only** - Solo analiza, no sube\n2. **Check Classification** - Determina si es limpio\n3. **Upload to Correct Bucket** - Sube al bucket correcto\n4. **Generate Training Pairs** - Solo si es limpio, usa bucket clean fijo\n5. **Monitor Progress** - Espera completar generación\n6. **Success Response** - Retorna resultados\n\n🔧 **Cambios:**\n- Analyze no sube automáticamente\n- Generate siempre usa 'document-clean'\n- Genera 10 pares (20 archivos) de 1 imagen",
-        "height": 200,
-        "width": 400
-      },
-      "type": "n8n-nodes-base.stickyNote",
-      "position": [
-        -688,
-        224
-      ],
-      "typeVersion": 1,
-      "id": "f9c45644-6891-48f9-a2cd-3e6afe9e13a7",
-      "name": "Workflow Info"
     },
     {
       "parameters": {
@@ -110,7 +63,7 @@
           "conditions": [
             {
               "id": "0a969238-cf34-497c-95c8-d247c004dffc",
-              "leftValue": "={{ $json.body.document_type }}",
+              "leftValue": "={{ $json.document_type }}",
               "rightValue": "documento_limpio",
               "operator": {
                 "type": "string",
@@ -126,10 +79,10 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        288,
-        624
+        976,
+        400
       ],
-      "id": "50dad35f-d666-4fbd-b52c-6202b54de31c",
+      "id": "e078deaf-5449-4750-bad0-2a3db5dc8597",
       "name": "Route Based on Classification"
     },
     {
@@ -166,13 +119,13 @@
         },
         "options": {}
       },
-      "id": "65b4200d-2101-408e-9605-9609f1535bcb",
+      "id": "59d6793d-e916-40fe-9db2-042af71d809a",
       "name": "Generate Training Pairs1",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
       "position": [
-        848,
-        608
+        1520,
+        272
       ]
     },
     {
@@ -184,13 +137,13 @@
           }
         }
       },
-      "id": "ca159eed-511c-49d3-b636-e3100e86a717",
+      "id": "b593274a-5052-437a-aba4-1a391fdaff35",
       "name": "Check Generation Status1",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
       "position": [
-        1232,
-        512
+        1920,
+        288
       ]
     },
     {
@@ -204,13 +157,13 @@
           ]
         }
       },
-      "id": "929c09be-e1a5-4b18-9c0a-fb8f51d68b0d",
+      "id": "f9f1513c-9853-4b3e-80d4-07f98de185db",
       "name": "Check Completion1",
       "type": "n8n-nodes-base.if",
       "typeVersion": 1,
       "position": [
-        1456,
-        512
+        2144,
+        288
       ]
     },
     {
@@ -218,13 +171,13 @@
         "amount": 5,
         "unit": "seconds"
       },
-      "id": "416bb839-e27b-42d4-94c1-5ddbb898a77a",
+      "id": "7d67a9e6-2d3f-408f-a583-4fc1d4f6229c",
       "name": "Wait1",
       "type": "n8n-nodes-base.wait",
       "typeVersion": 1,
       "position": [
-        1232,
-        656
+        1920,
+        432
       ],
       "webhookId": "21ac7ea6-2897-47bf-8cce-e32c54127ac1"
     },
@@ -234,13 +187,13 @@
         "responseBody": "{\n  \"status\": \"success\",\n  \"message\": \"Synthetic data generation completed\",\n  \"classification\": \"={{$('Analyze Document Only').item.json.body.document_type}}\",\n  \"uploaded_to\": \"={{$('Upload to Clean Bucket').item.json.body.bucket}}\",\n  \"generated_pairs\": \"={{$json.total_files_created}}\",\n  \"target_bucket\": \"document-training\"\n}",
         "options": {}
       },
-      "id": "21afcf66-3a3a-4834-a3b8-fb38ce8484ad",
+      "id": "9d8a7be7-7fd0-4276-9e03-6749211a9519",
       "name": "Response - Success1",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1,
       "position": [
-        1680,
-        432
+        2368,
+        208
       ]
     },
     {
@@ -248,13 +201,13 @@
         "url": "http://doc-restoration-api:8000/synthetic/stats/document-training",
         "options": {}
       },
-      "id": "5bc753f5-d370-4b77-8130-61084b691fec",
+      "id": "822930cd-fadb-4a99-bdc7-9b14896f7e40",
       "name": "Update Dataset Stats1",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
       "position": [
-        1456,
-        320
+        2144,
+        96
       ]
     },
     {
@@ -289,13 +242,13 @@
           }
         }
       },
-      "id": "5fb16c1d-3402-4dd4-a87b-7e88242b87a2",
+      "id": "90e73132-483a-47e3-9ee3-a2bd1efc9b04",
       "name": "Upload to Clean Bucket1",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        560,
-        496
+        1248,
+        272
       ]
     },
     {
@@ -330,13 +283,13 @@
           }
         }
       },
-      "id": "559314f2-1905-4f6c-9bf6-574c9735b0e5",
+      "id": "1ad6c021-fe85-40bf-b3cb-16ed9b7ba09c",
       "name": "Upload to Degraded Bucket1",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        560,
-        752
+        1248,
+        528
       ]
     },
     {
@@ -349,30 +302,62 @@
           "rawBody": true
         }
       },
-      "id": "c68c5d3c-9fe7-4ba9-9776-ccbd51dd5651",
+      "id": "72aa6908-b45d-41c2-9462-7f96fcb498ee",
       "name": "Webhook - Data Upload1",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 1,
       "position": [
-        -592,
-        656
+        16,
+        416
       ],
       "webhookId": "data-generation"
+    },
+    {
+      "parameters": {
+        "resource": "image",
+        "operation": "analyze",
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4o-mini",
+          "mode": "list",
+          "cachedResultName": "GPT-4O-MINI"
+        },
+        "text": "Responde siempre en español.\n\nAnaliza cuidadosamente la imagen proporcionada, que corresponde a un documento escaneado o fotografiado. Evalúa si el documento se encuentra en buen estado o presenta algún tipo de daño que afecte su legibilidad. \n\nTen en cuenta:\n- Documento limpio: sin manchas, arrugas, roturas, manchas de tinta, decoloración severa o partes faltantes.\n- Documento no legible: cualquier daño físico o digital que dificulte o impida la lectura completa del contenido (borroso, muy oscuro, con secciones faltantes, etc.).\n\nDevuelve la respuesta en el siguiente formato JSON, sin texto adicional:\n\n{\n  \"document_type\": \"documento_limpio\" \n}\n\no\n\n{\n  \"document_type\": \"documento_no_legible\"\n}\n",
+        "inputType": "base64",
+        "binaryPropertyName": "File",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.8,
+      "position": [
+        160,
+        256
+      ],
+      "id": "3a59d397-f2e5-4b0a-8b85-827203e1c0e1",
+      "name": "Analyze image",
+      "credentials": {
+        "openAiApi": {
+          "id": "NpXtRw5pOJDLxlLo",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst results = [];\n\nfor (const item of items) {\n\t// Obtener el texto del campo content\n\tconst rawContent = item.json.content;\n\n\ttry {\n\t\t// Convertir el string JSON en objeto\n\t\tconst parsed = JSON.parse(rawContent);\n\n\t\t// Devolver el objeto como salida\n\t\tresults.push({ json: parsed });\n\t} catch (error) {\n\t\t// En caso de error de parseo, devolver mensaje de error\n\t\tresults.push({\n\t\t\tjson: {\n\t\t\t\terror: 'No se pudo parsear el contenido',\n\t\t\t\traw: rawContent\n\t\t\t}\n\t\t});\n\t}\n}\n\nreturn results;\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        368,
+        256
+      ],
+      "id": "eab6a1d3-c5f9-4309-ae42-30ac3ae078c0",
+      "name": "Code"
     }
   ],
   "pinData": {},
   "connections": {
-    "Analyze Document Only": {
-      "main": [
-        [
-          {
-            "node": "Check if Clean Document",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "Check if Clean Document": {
       "main": [
         [
@@ -418,11 +403,6 @@
             "index": 0
           }
         ]
-      ]
-    },
-    "Generate Training Pairs1": {
-      "main": [
-        []
       ]
     },
     "Check Generation Status1": {
@@ -502,14 +482,36 @@
       "main": [
         [
           {
-            "node": "Analyze Document Only",
-            "type": "main",
-            "index": 0
-          },
-          {
             "node": "Merge Original Data",
             "type": "main",
             "index": 1
+          },
+          {
+            "node": "Analyze image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze image": {
+      "main": [
+        [
+          {
+            "node": "Code",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code": {
+      "main": [
+        [
+          {
+            "node": "Check if Clean Document",
+            "type": "main",
+            "index": 0
           }
         ]
       ]
@@ -519,10 +521,11 @@
   "settings": {
     "executionOrder": "v1"
   },
-  "versionId": "01aef662-6337-45b7-98de-763a24d5c6c5",
+  "versionId": "511c3943-e3bf-4061-af47-b97654643f31",
   "meta": {
-    "instanceId": "ef78f03495115ef8b7058f8c957950be9554e5b6e925be0dea911cfff9261c59"
+    "templateCredsSetupCompleted": true,
+    "instanceId": "d13ab81f2db054284e227cd6077085c0ab200f7088bc18e4d61ee9fa18915bc4"
   },
-  "id": "VjThaZbAfRK3E8zI",
+  "id": "m8RrRIQms3yHQQMd",
   "tags": []
 }
