@@ -16,6 +16,9 @@ import asyncio
 import requests
 from typing import Optional
 
+# Configurar logger
+logger = logging.getLogger(__name__)
+
 # Agregar path para importaciones
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -23,6 +26,20 @@ try:
     from config.settings import jobs_state
 except ImportError:
     jobs_state = {}
+
+# Importar funciones de entrenamiento
+try:
+    sys.path.append(str(Path(__file__).parent.parent.parent))  # Agregar root del proyecto
+    sys.path.append(str(Path(__file__).parent.parent.parent / "layers" / "train-layers"))  # Path específico
+    sys.path.append(str(Path(__file__).parent.parent.parent / "layers" / "layer-1"))  # Path específico
+    
+    from train_layer_2 import create_layer2_trainer, validate_training_parameters
+    from layer_1 import PreprocessingPipeline
+except ImportError as e:
+    print(f"Error importando módulos de entrenamiento: {e}")
+    create_layer2_trainer = None
+    validate_training_parameters = None
+    PreprocessingPipeline = None
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/training", tags=["Entrenamiento"])
@@ -380,35 +397,7 @@ async def cancel_training_job(job_id: str):
     except Exception as e:
         logger.error(f"Error cancelando trabajo: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-    """Cancelar trabajo de entrenamiento"""
-    try:
-        if job_id not in jobs_state:
-            raise HTTPException(status_code=404, detail="Trabajo no encontrado")
-        
-        job = jobs_state[job_id]
-        
-        if job["status"] == "completed":
-            return JSONResponse({
-                "status": "info",
-                "message": "El trabajo ya está completado",
-                "job_id": job_id
-            })
-        
-        # Marcar como cancelado
-        job["status"] = "cancelled"
-        job["end_time"] = datetime.now().isoformat()
-        
-        return JSONResponse({
-            "status": "success",
-            "message": "Trabajo cancelado",
-            "job_id": job_id
-        })
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error cancelando trabajo: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+
 
 @router.get("/results/{job_id}")
 async def get_training_results(job_id: str):
@@ -507,73 +496,81 @@ async def run_layer1_evaluation(job_id: str, max_images: int):
 
 async def run_layer2_training(job_id: str, num_epochs: int, max_pairs: int, 
                               batch_size: int, use_training_bucket: bool = True):
-    """Ejecutar entrenamiento de Capa 2 en background"""
+    """Ejecutar entrenamiento de Capa 2 en background usando funciones importadas"""
     try:
         job = jobs_state[job_id]
         job["status"] = "running"
         job["progress"] = 10
         
-        # Ejecutar script de entrenamiento
-        script_path = Path(__file__).parent.parent / "train-layers" / "train_layer_2.py"
+        # Verificar que las funciones estén disponibles
+        if create_layer2_trainer is None:
+            raise ImportError("Módulo de entrenamiento Layer 2 no disponible")
         
-        if not script_path.exists():
-            raise FileNotFoundError(f"Script no encontrado: {script_path}")
+        # Validar parámetros
+        validation_errors = validate_training_parameters(num_epochs, max_pairs, batch_size)
+        if validation_errors:
+            raise ValueError(f"Parámetros inválidos: {validation_errors}")
         
-        # Configurar variables de entorno para el script
-        env = os.environ.copy()
-        env["TRAINING_EPOCHS"] = str(num_epochs)
-        env["TRAINING_MAX_PAIRS"] = str(max_pairs)
-        env["TRAINING_BATCH_SIZE"] = str(batch_size)
-        env["TRAINING_USE_TRAINING_BUCKET"] = str(use_training_bucket)
-        env["TRAINING_JOB_ID"] = job_id
+        job["progress"] = 20
         
-        # Ejecutar como subprocess
-        process = await asyncio.create_subprocess_exec(
-            sys.executable, str(script_path),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env=env
-        )
+        # Crear trainer
+        trainer = create_layer2_trainer("http://localhost:8000")
         
         job["progress"] = 30
         
-        # Simular progreso por épocas (esto se puede mejorar con comunicación IPC)
-        async def update_progress():
+        # Ejecutar entrenamiento en un hilo separado para no bloquear
+        import asyncio
+        import threading
+        
+        def run_training():
+            try:
+                trainer.train(
+                    num_epochs=num_epochs,
+                    max_pairs=max_pairs,
+                    batch_size=batch_size,
+                    use_training_bucket=use_training_bucket
+                )
+                return True
+            except Exception as e:
+                raise e
+        
+        # Ejecutar en thread separado
+        loop = asyncio.get_event_loop()
+        
+        def update_progress():
             for epoch in range(1, num_epochs + 1):
-                await asyncio.sleep(30)  # Simular tiempo por época
+                import time
+                time.sleep(30)  # Simular tiempo por época
                 if job["status"] == "running":
                     job["current_epoch"] = epoch
                     job["progress"] = 30 + (epoch / num_epochs) * 60
         
-        # Ejecutar actualización de progreso en paralelo
-        progress_task = asyncio.create_task(update_progress())
+        # Ejecutar entrenamiento
+        training_thread = threading.Thread(target=run_training)
+        progress_thread = threading.Thread(target=update_progress)
         
-        stdout, stderr = await process.communicate()
+        training_thread.start()
+        progress_thread.start()
         
-        # Cancelar task de progreso
-        progress_task.cancel()
+        # Esperar a que termine el entrenamiento
+        training_thread.join()
         
-        if process.returncode == 0:
-            job["status"] = "completed"
-            job["progress"] = 100
-            job["current_epoch"] = num_epochs
-            job["results"] = {
-                "success": True,
-                "output": stdout.decode('utf-8'),
-                "epochs_completed": num_epochs,
-                "pairs_used": max_pairs,
-                "batch_size": batch_size
-            }
-            logger.info(f"Entrenamiento de Capa 2 completado: {job_id}")
-        else:
-            job["status"] = "failed"
-            job["error"] = stderr.decode('utf-8')
-            logger.error(f"Error en entrenamiento de Capa 2: {stderr.decode('utf-8')}")
+        job["status"] = "completed"
+        job["progress"] = 100
+        job["current_epoch"] = num_epochs
+        job["results"] = {
+            "success": True,
+            "epochs_completed": num_epochs,
+            "pairs_used": max_pairs,
+            "batch_size": batch_size,
+            "use_training_bucket": use_training_bucket
+        }
+        logger.info(f"Entrenamiento de Capa 2 completado: {job_id}")
         
     except Exception as e:
         job["status"] = "failed"
         job["error"] = str(e)
-        logger.error(f"Error ejecutando entrenamiento de Capa 2: {e}")
+        print(f"Error ejecutando entrenamiento de Capa 2: {e}")
     
     finally:
         job["end_time"] = datetime.now().isoformat()

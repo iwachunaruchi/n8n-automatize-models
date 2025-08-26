@@ -2,12 +2,12 @@
 Entrenamiento para Capa 2: NAFNet + DocUNet
 NAFNet para denoising/deblurring + DocUNet para dewarping
 
-Este script entrena modelos usando pares de imágenes degradadas vs limpias desde la API
+Este módulo contiene clases y funciones para ser importadas por la API.
+No ejecuta entrenamiento directamente - debe ser llamado desde la API.
 """
 
 import os
 import sys
-import requests
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -25,8 +25,13 @@ import albumentations as A
 from albumentations.pytorch import ToTensorV2
 import random
 
-# Configuración
-API_BASE_URL = "http://localhost:8000"
+# Importaciones que serán inyectadas por la API
+try:
+    import requests
+except ImportError:
+    requests = None
+
+# Configuración de buckets (será inyectada por la API)
 MINIO_BUCKETS = {
     'degraded': 'document-degraded',
     'clean': 'document-clean',
@@ -642,36 +647,28 @@ class Layer2Trainer:
         plt.savefig(output_dir / "training_history.png", dpi=150, bbox_inches='tight')
         plt.close()
 
-def main():
-    """Función principal"""
-    print("🔧 ENTRENAMIENTO CAPA 2")
-    print("========================")
-    print("Modelos: NAFNet (denoising) + DocUNet (dewarping)")
-    print("📁 OPCIÓN 1: Usando bucket 'document-training' con pares sintéticos")
-    print()
-    
-    # Verificar conexión con API
-    try:
-        response = requests.get(f"{API_BASE_URL}/health")
-        if response.status_code == 200:
-            print("✅ API conectada exitosamente")
-        else:
-            print(f"⚠️ API respondió con código: {response.status_code}")
-    except Exception as e:
-        print(f"❌ Error conectando con API: {e}")
-        print("Asegúrate de que la API esté ejecutándose en localhost:8000")
-        return
-    
-    # Crear entrenador
-    trainer = Layer2Trainer()
-    
-    # Entrenar modelos usando OPCIÓN 1
-    trainer.train(
-        num_epochs=15,          # Reducido para pruebas más rápidas
-        max_pairs=100,          # Cantidad razonable para pruebas
-        batch_size=2,           # Batch pequeño para evitar problemas de memoria
-        use_training_bucket=True  # ✅ OPCIÓN 1: Usar bucket con pares sintéticos
-    )
+# ============================================================================
+# FUNCIONES DE UTILIDAD PARA LA API
+# ============================================================================
 
-if __name__ == "__main__":
-    main()
+def create_layer2_trainer(api_base_url: str = "http://localhost:8000") -> 'Layer2Trainer':
+    """
+    Función factory para crear un entrenador de Capa 2
+    Para ser usada por la API
+    """
+    return Layer2Trainer(api_base_url)
+
+def validate_training_parameters(num_epochs: int, max_pairs: int, batch_size: int) -> Dict[str, str]:
+    """Validar parámetros de entrenamiento"""
+    errors = {}
+    
+    if num_epochs < 1 or num_epochs > 1000:
+        errors['num_epochs'] = "Debe estar entre 1 y 1000"
+    
+    if max_pairs < 1 or max_pairs > 10000:
+        errors['max_pairs'] = "Debe estar entre 1 y 10000"
+    
+    if batch_size < 1 or batch_size > 32:
+        errors['batch_size'] = "Debe estar entre 1 y 32"
+    
+    return errors
