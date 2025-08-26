@@ -13,6 +13,7 @@ from pathlib import Path
 from datetime import datetime
 import subprocess
 import asyncio
+import requests
 from typing import Optional
 
 # Agregar path para importaciones
@@ -74,9 +75,16 @@ async def start_layer2_training(
     background_tasks: BackgroundTasks,
     num_epochs: int = 10,
     max_pairs: int = 100,
-    batch_size: int = 2
+    batch_size: int = 2,
+    use_training_bucket: bool = True
 ):
-    """Iniciar entrenamiento de Capa 2 (NAFNet + DocUNet)"""
+    """
+    Iniciar entrenamiento de Capa 2 (NAFNet + DocUNet)
+    
+    Args:
+        use_training_bucket: Si usar bucket 'document-training' con pares sintéticos (recomendado)
+                           False: usar buckets separados 'document-degraded' y 'document-clean'
+    """
     try:
         job_id = str(uuid.uuid4())
         
@@ -90,6 +98,7 @@ async def start_layer2_training(
             "num_epochs": num_epochs,
             "max_pairs": max_pairs,
             "batch_size": batch_size,
+            "use_training_bucket": use_training_bucket,
             "current_epoch": 0,
             "results": None,
             "error": None
@@ -98,7 +107,8 @@ async def start_layer2_training(
         jobs_state[job_id] = job_config
         
         # Ejecutar en background
-        background_tasks.add_task(run_layer2_training, job_id, num_epochs, max_pairs, batch_size)
+        background_tasks.add_task(run_layer2_training, job_id, num_epochs, max_pairs, 
+                                batch_size, use_training_bucket)
         
         return JSONResponse({
             "status": "success",
@@ -108,7 +118,9 @@ async def start_layer2_training(
             "parameters": {
                 "num_epochs": num_epochs,
                 "max_pairs": max_pairs,
-                "batch_size": batch_size
+                "batch_size": batch_size,
+                "use_training_bucket": use_training_bucket,
+                "data_source": "document-training bucket" if use_training_bucket else "separate buckets"
             },
             "check_status_url": f"/training/status/{job_id}"
         })
@@ -188,8 +200,186 @@ async def list_training_jobs():
         logger.error(f"Error listando trabajos: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.post("/layer2/prepare-data")
+async def prepare_layer2_data(
+    background_tasks: BackgroundTasks,
+    target_pairs: int = 100,
+    source_bucket: str = "document-clean"
+):
+    """
+    Preparar datos para entrenamiento de Capa 2
+    Genera pares sintéticos adicionales si es necesario
+    """
+    try:
+        # Verificar pares existentes en bucket de entrenamiento
+        response = requests.get(f"http://localhost:8000/files/list/document-training")
+        
+        if response.status_code != 200:
+            raise HTTPException(status_code=500, detail="Error accediendo al bucket de entrenamiento")
+        
+        files = response.json().get('files', [])
+        clean_files = [f for f in files if f.startswith('clean_')]
+        degraded_files = [f for f in files if f.startswith('degraded_')]
+        
+        current_pairs = min(len(clean_files), len(degraded_files))
+        
+        if current_pairs >= target_pairs:
+            return JSONResponse({
+                "status": "success",
+                "message": f"Ya hay suficientes pares ({current_pairs}/{target_pairs})",
+                "current_pairs": current_pairs,
+                "target_pairs": target_pairs,
+                "action": "none_needed"
+            })
+        
+        # Generar pares adicionales
+        needed_pairs = target_pairs - current_pairs
+        
+        # Usar servicio de datos sintéticos para generar más pares
+        from services.synthetic_data_service import synthetic_data_service
+        
+        job_id = str(uuid.uuid4())
+        
+        job_config = {
+            "job_id": job_id,
+            "type": "data_preparation",
+            "status": "started",
+            "start_time": datetime.now().isoformat(),
+            "progress": 0,
+            "target_pairs": target_pairs,
+            "current_pairs": current_pairs,
+            "needed_pairs": needed_pairs,
+            "source_bucket": source_bucket,
+            "results": None,
+            "error": None
+        }
+        
+        jobs_state[job_id] = job_config
+        
+        # Ejecutar generación en background
+        background_tasks.add_task(generate_additional_pairs, job_id, needed_pairs, source_bucket)
+        
+        return JSONResponse({
+            "status": "success",
+            "message": f"Generando {needed_pairs} pares adicionales",
+            "job_id": job_id,
+            "current_pairs": current_pairs,
+            "target_pairs": target_pairs,
+            "needed_pairs": needed_pairs,
+            "check_status_url": f"/training/status/{job_id}"
+        })
+        
+    except Exception as e:
+        logger.error(f"Error preparando datos para Capa 2: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+async def generate_additional_pairs(job_id: str, needed_pairs: int, source_bucket: str):
+    """Generar pares adicionales en background"""
+    try:
+        job = jobs_state[job_id]
+        job["status"] = "running"
+        job["progress"] = 20
+        
+        from services.synthetic_data_service import synthetic_data_service
+        
+        # Generar pares adicionales
+        result = synthetic_data_service.generate_training_pairs(source_bucket, needed_pairs)
+        
+        job["status"] = "completed"
+        job["progress"] = 100
+        job["results"] = result
+        job["end_time"] = datetime.now().isoformat()
+        
+        logger.info(f"Generación de pares completada: {job_id}")
+        
+    except Exception as e:
+        job["status"] = "failed"
+        job["error"] = str(e)
+        job["end_time"] = datetime.now().isoformat()
+        logger.error(f"Error generando pares adicionales: {e}")
+
+@router.get("/layer2/data-status")
+async def get_layer2_data_status():
+    """Verificar estado de datos para Capa 2"""
+    try:
+        # Verificar bucket de entrenamiento
+        response = requests.get("http://localhost:8000/files/list/document-training")
+        
+        if response.status_code != 200:
+            return JSONResponse({
+                "status": "error",
+                "message": "No se puede acceder al bucket de entrenamiento"
+            })
+        
+        files = response.json().get('files', [])
+        clean_files = [f for f in files if f.startswith('clean_')]
+        degraded_files = [f for f in files if f.startswith('degraded_')]
+        
+        # Verificar pares válidos
+        valid_pairs = 0
+        for clean_file in clean_files:
+            if '_' in clean_file and '.' in clean_file:
+                uuid_part = clean_file.split('_', 1)[1].rsplit('.', 1)[0]
+                degraded_match = f"degraded_{uuid_part}.png"
+                if degraded_match in degraded_files:
+                    valid_pairs += 1
+        
+        # Estadísticas adicionales
+        other_files = [f for f in files if not (f.startswith('clean_') or f.startswith('degraded_'))]
+        
+        return JSONResponse({
+            "status": "success",
+            "bucket": "document-training",
+            "statistics": {
+                "total_files": len(files),
+                "clean_files": len(clean_files),
+                "degraded_files": len(degraded_files),
+                "valid_pairs": valid_pairs,
+                "other_files": len(other_files)
+            },
+            "ready_for_training": valid_pairs > 0,
+            "recommendations": {
+                "minimum_pairs": 50,
+                "recommended_pairs": 200,
+                "current_status": "sufficient" if valid_pairs >= 50 else "needs_more" if valid_pairs > 0 else "empty"
+            }
+        })
+        
+    except Exception as e:
+        logger.error(f"Error verificando estado de datos: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @router.delete("/jobs/{job_id}")
 async def cancel_training_job(job_id: str):
+    """Cancelar trabajo de entrenamiento"""
+    try:
+        if job_id not in jobs_state:
+            raise HTTPException(status_code=404, detail="Trabajo no encontrado")
+        
+        job = jobs_state[job_id]
+        
+        if job["status"] == "completed":
+            return JSONResponse({
+                "status": "info",
+                "message": "El trabajo ya está completado",
+                "job_id": job_id
+            })
+        
+        # Marcar como cancelado
+        job["status"] = "cancelled"
+        job["end_time"] = datetime.now().isoformat()
+        
+        return JSONResponse({
+            "status": "success",
+            "message": "Trabajo cancelado",
+            "job_id": job_id
+        })
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error cancelando trabajo: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
     """Cancelar trabajo de entrenamiento"""
     try:
         if job_id not in jobs_state:
@@ -315,7 +505,8 @@ async def run_layer1_evaluation(job_id: str, max_images: int):
     finally:
         job["end_time"] = datetime.now().isoformat()
 
-async def run_layer2_training(job_id: str, num_epochs: int, max_pairs: int, batch_size: int):
+async def run_layer2_training(job_id: str, num_epochs: int, max_pairs: int, 
+                              batch_size: int, use_training_bucket: bool = True):
     """Ejecutar entrenamiento de Capa 2 en background"""
     try:
         job = jobs_state[job_id]
@@ -333,6 +524,7 @@ async def run_layer2_training(job_id: str, num_epochs: int, max_pairs: int, batc
         env["TRAINING_EPOCHS"] = str(num_epochs)
         env["TRAINING_MAX_PAIRS"] = str(max_pairs)
         env["TRAINING_BATCH_SIZE"] = str(batch_size)
+        env["TRAINING_USE_TRAINING_BUCKET"] = str(use_training_bucket)
         env["TRAINING_JOB_ID"] = job_id
         
         # Ejecutar como subprocess
@@ -403,7 +595,17 @@ async def get_training_info():
                 "description": "Denoising/Deblurring + Dewarping",
                 "type": "training",
                 "requires_gpu": True,
-                "endpoints": ["/training/layer2/train"]
+                "endpoints": ["/training/layer2/train"],
+                "data_sources": {
+                    "recommended": "document-training bucket (pares sintéticos)",
+                    "alternative": "document-degraded + document-clean buckets"
+                },
+                "parameters": {
+                    "use_training_bucket": "true/false - usar bucket de entrenamiento con pares sintéticos",
+                    "num_epochs": "número de épocas de entrenamiento",
+                    "max_pairs": "máximo número de pares a usar",
+                    "batch_size": "tamaño del batch"
+                }
             }
         },
         "data_source": "MinIO buckets via API",

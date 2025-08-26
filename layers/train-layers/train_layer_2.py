@@ -194,13 +194,18 @@ class SimpleDocUNet(nn.Module):
 class APIDocumentDataset(Dataset):
     """Dataset que carga imágenes desde la API"""
     
-    def __init__(self, api_base_url: str, max_pairs: int = 100, patch_size: int = 128):
+    def __init__(self, api_base_url: str, max_pairs: int = 100, patch_size: int = 128, 
+                 use_training_bucket: bool = True):
         self.api_url = api_base_url
         self.patch_size = patch_size
         self.pairs = []
+        self.use_training_bucket = use_training_bucket
         
         # Cargar pares de imágenes
-        self._load_image_pairs(max_pairs)
+        if use_training_bucket:
+            self._load_training_bucket_pairs(max_pairs)
+        else:
+            self._load_image_pairs(max_pairs)
         
         # Transformaciones
         self.transform = A.Compose([
@@ -209,6 +214,54 @@ class APIDocumentDataset(Dataset):
             A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
             ToTensorV2()
         ])
+    
+    def _load_training_bucket_pairs(self, max_pairs: int):
+        """Cargar pares desde bucket de entrenamiento (método recomendado)"""
+        print(f"📥 Cargando pares desde bucket 'document-training'...")
+        
+        try:
+            # Obtener archivos del bucket de entrenamiento
+            response = requests.get(f"{self.api_url}/files/list/{MINIO_BUCKETS['training']}")
+            
+            if response.status_code != 200:
+                print("❌ Error obteniendo archivos del bucket de entrenamiento")
+                return
+            
+            files = response.json().get('files', [])
+            
+            # Separar archivos clean y degraded
+            clean_files = [f for f in files if f.startswith('clean_')]
+            degraded_files = [f for f in files if f.startswith('degraded_')]
+            
+            print(f"📊 Archivos limpios encontrados: {len(clean_files)}")
+            print(f"📊 Archivos degradados encontrados: {len(degraded_files)}")
+            
+            # Crear pares basados en el UUID del par
+            pairs_found = 0
+            for clean_file in clean_files:
+                if pairs_found >= max_pairs:
+                    break
+                
+                # Extraer UUID del nombre: clean_{uuid}.png -> {uuid}
+                if '_' in clean_file and '.' in clean_file:
+                    uuid_part = clean_file.split('_', 1)[1].rsplit('.', 1)[0]
+                    
+                    # Buscar archivo degradado correspondiente
+                    degraded_match = f"degraded_{uuid_part}.png"
+                    
+                    if degraded_match in degraded_files:
+                        self.pairs.append((degraded_match, clean_file))  # (input, target)
+                        pairs_found += 1
+                        
+                        if pairs_found <= 5:  # Mostrar solo los primeros 5
+                            print(f"✅ Par encontrado: {degraded_match} -> {clean_file}")
+            
+            print(f"📊 Pares válidos encontrados: {len(self.pairs)}")
+            
+        except Exception as e:
+            print(f"❌ Error cargando pares del bucket de entrenamiento: {e}")
+            # Fallback al método original
+            self._load_image_pairs(max_pairs)
     
     def _load_image_pairs(self, max_pairs: int):
         """Cargar pares de imágenes degradadas y limpias"""
@@ -263,6 +316,19 @@ class APIDocumentDataset(Dataset):
             return None
         except:
             return None
+    
+    def __getitem__(self, idx):
+        degraded_file, clean_file = self.pairs[idx]
+        
+        # Determinar bucket según el método usado
+        if self.use_training_bucket:
+            # Ambos archivos están en el bucket de entrenamiento
+            degraded = self._download_image(MINIO_BUCKETS['training'], degraded_file)
+            clean = self._download_image(MINIO_BUCKETS['training'], clean_file)
+        else:
+            # Método original: buckets separados
+            degraded = self._download_image(MINIO_BUCKETS['degraded'], degraded_file)
+            clean = self._download_image(MINIO_BUCKETS['clean'], clean_file)
     
     def _extract_patch(self, degraded: np.ndarray, clean: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         """Extraer patch aleatorio"""
@@ -460,16 +526,19 @@ class Layer2Trainer:
         
         return {'val_loss': total_loss / len(dataloader)}
     
-    def train(self, num_epochs: int = 10, max_pairs: int = 100, batch_size: int = 4):
+    def train(self, num_epochs: int = 10, max_pairs: int = 100, batch_size: int = 4, 
+              use_training_bucket: bool = True):
         """Entrenamiento completo"""
         print("🔧 ENTRENAMIENTO CAPA 2: NAFNet + DocUNet")
         print("=" * 60)
         print(f"🔧 Dispositivo: {self.device}")
         print(f"📊 Épocas: {num_epochs}")
         print(f"📦 Batch size: {batch_size}")
+        print(f"📁 Usando bucket de entrenamiento: {use_training_bucket}")
         
         # Crear dataset
-        dataset = APIDocumentDataset(self.api_url, max_pairs=max_pairs, patch_size=128)
+        dataset = APIDocumentDataset(self.api_url, max_pairs=max_pairs, 
+                                   patch_size=128, use_training_bucket=use_training_bucket)
         
         if len(dataset) == 0:
             print("❌ No se encontraron pares de imágenes para entrenar")
@@ -578,6 +647,7 @@ def main():
     print("🔧 ENTRENAMIENTO CAPA 2")
     print("========================")
     print("Modelos: NAFNet (denoising) + DocUNet (dewarping)")
+    print("📁 OPCIÓN 1: Usando bucket 'document-training' con pares sintéticos")
     print()
     
     # Verificar conexión con API
@@ -595,11 +665,12 @@ def main():
     # Crear entrenador
     trainer = Layer2Trainer()
     
-    # Entrenar modelos
+    # Entrenar modelos usando OPCIÓN 1
     trainer.train(
-        num_epochs=20,
-        max_pairs=150,
-        batch_size=2  # Batch pequeño para evitar problemas de memoria
+        num_epochs=15,          # Reducido para pruebas más rápidas
+        max_pairs=100,          # Cantidad razonable para pruebas
+        batch_size=2,           # Batch pequeño para evitar problemas de memoria
+        use_training_bucket=True  # ✅ OPCIÓN 1: Usar bucket con pares sintéticos
     )
 
 if __name__ == "__main__":
