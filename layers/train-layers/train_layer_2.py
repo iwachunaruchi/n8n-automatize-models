@@ -25,13 +25,18 @@ import albumentations as A
 from albumentations.pytorch import ToTensorV2
 import random
 
-# Importaciones que serán inyectadas por la API
-try:
-    import requests
-except ImportError:
-    requests = None
+# Importar servicios directamente (no HTTP)
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# Configuración de buckets (será inyectada por la API)
+try:
+    from api.services.minio_service import minio_service
+    from api.services.image_analysis_service import image_analysis_service
+    SERVICES_AVAILABLE = True
+except ImportError as e:
+    print(f"Servicios no disponibles: {e}")
+    SERVICES_AVAILABLE = False
+
+# Configuración de buckets
 MINIO_BUCKETS = {
     'degraded': 'document-degraded',
     'clean': 'document-clean',
@@ -196,15 +201,17 @@ class SimpleDocUNet(nn.Module):
 # DATASET PARA CARGAR IMÁGENES DESDE API
 # ============================================================================
 
-class APIDocumentDataset(Dataset):
-    """Dataset que carga imágenes desde la API"""
+class DocumentDataset(Dataset):
+    """Dataset que carga imágenes usando servicios directos (sin HTTP)"""
     
-    def __init__(self, api_base_url: str, max_pairs: int = 100, patch_size: int = 128, 
+    def __init__(self, max_pairs: int = 100, patch_size: int = 128, 
                  use_training_bucket: bool = True):
-        self.api_url = api_base_url
         self.patch_size = patch_size
         self.pairs = []
         self.use_training_bucket = use_training_bucket
+        
+        if not SERVICES_AVAILABLE:
+            raise ImportError("Servicios MinIO no disponibles")
         
         # Cargar pares de imágenes
         if use_training_bucket:
@@ -221,18 +228,12 @@ class APIDocumentDataset(Dataset):
         ])
     
     def _load_training_bucket_pairs(self, max_pairs: int):
-        """Cargar pares desde bucket de entrenamiento (método recomendado)"""
+        """Cargar pares desde bucket de entrenamiento usando servicios directos"""
         print(f"📥 Cargando pares desde bucket 'document-training'...")
         
         try:
-            # Obtener archivos del bucket de entrenamiento
-            response = requests.get(f"{self.api_url}/files/list/{MINIO_BUCKETS['training']}")
-            
-            if response.status_code != 200:
-                print("❌ Error obteniendo archivos del bucket de entrenamiento")
-                return
-            
-            files = response.json().get('files', [])
+            # Obtener archivos del bucket usando servicio directo
+            files = minio_service.list_files(MINIO_BUCKETS['training'])
             
             # Separar archivos clean y degraded
             clean_files = [f for f in files if f.startswith('clean_')]
@@ -269,20 +270,13 @@ class APIDocumentDataset(Dataset):
             self._load_image_pairs(max_pairs)
     
     def _load_image_pairs(self, max_pairs: int):
-        """Cargar pares de imágenes degradadas y limpias"""
-        print(f"📥 Cargando pares de imágenes desde API...")
+        """Cargar pares de imágenes degradadas y limpias usando servicios directos"""
+        print(f"📥 Cargando pares de imágenes desde servicios...")
         
         try:
-            # Obtener listas de archivos
-            degraded_response = requests.get(f"{self.api_url}/files/list/{MINIO_BUCKETS['degraded']}")
-            clean_response = requests.get(f"{self.api_url}/files/list/{MINIO_BUCKETS['clean']}")
-            
-            if degraded_response.status_code != 200 or clean_response.status_code != 200:
-                print("❌ Error obteniendo listas de archivos")
-                return
-            
-            degraded_files = degraded_response.json().get('files', [])
-            clean_files = clean_response.json().get('files', [])
+            # Obtener listas de archivos usando servicios directos
+            degraded_files = minio_service.list_files(MINIO_BUCKETS['degraded'])
+            clean_files = minio_service.list_files(MINIO_BUCKETS['clean'])
             
             # Crear pares válidos
             pairs_found = 0
@@ -311,15 +305,17 @@ class APIDocumentDataset(Dataset):
             print(f"❌ Error cargando pares: {e}")
     
     def _download_image(self, bucket: str, filename: str) -> Optional[np.ndarray]:
-        """Descargar imagen desde API"""
+        """Descargar imagen usando servicios directos"""
         try:
-            response = requests.get(f"{self.api_url}/files/view/{bucket}/{filename}")
-            if response.status_code == 200:
-                img_array = np.frombuffer(response.content, np.uint8)
+            # Usar servicio MinIO directamente
+            image_data = minio_service.download_file(bucket, filename)
+            if image_data:
+                img_array = np.frombuffer(image_data, np.uint8)
                 image = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
                 return cv2.cvtColor(image, cv2.COLOR_BGR2RGB) if image is not None else None
             return None
-        except:
+        except Exception as e:
+            print(f"Error descargando {bucket}/{filename}: {e}")
             return None
     
     def __getitem__(self, idx):
@@ -394,10 +390,12 @@ class APIDocumentDataset(Dataset):
 # ============================================================================
 
 class Layer2Trainer:
-    """Entrenador para modelos de Capa 2"""
+    """Entrenador para modelos de Capa 2 usando servicios directos"""
     
-    def __init__(self, api_base_url: str = API_BASE_URL):
-        self.api_url = api_base_url
+    def __init__(self):
+        if not SERVICES_AVAILABLE:
+            raise ImportError("Servicios MinIO no disponibles para entrenamiento")
+            
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         
         # Modelos
@@ -541,9 +539,9 @@ class Layer2Trainer:
         print(f"📦 Batch size: {batch_size}")
         print(f"📁 Usando bucket de entrenamiento: {use_training_bucket}")
         
-        # Crear dataset
-        dataset = APIDocumentDataset(self.api_url, max_pairs=max_pairs, 
-                                   patch_size=128, use_training_bucket=use_training_bucket)
+        # Crear dataset usando servicios directos
+        dataset = DocumentDataset(max_pairs=max_pairs, 
+                                 patch_size=128, use_training_bucket=use_training_bucket)
         
         if len(dataset) == 0:
             print("❌ No se encontraron pares de imágenes para entrenar")
@@ -651,12 +649,12 @@ class Layer2Trainer:
 # FUNCIONES DE UTILIDAD PARA LA API
 # ============================================================================
 
-def create_layer2_trainer(api_base_url: str = "http://localhost:8000") -> 'Layer2Trainer':
+def create_layer2_trainer() -> 'Layer2Trainer':
     """
     Función factory para crear un entrenador de Capa 2
-    Para ser usada por la API
+    Para ser usada por la API (sin dependencias HTTP)
     """
-    return Layer2Trainer(api_base_url)
+    return Layer2Trainer()
 
 def validate_training_parameters(num_epochs: int, max_pairs: int, batch_size: int) -> Dict[str, str]:
     """Validar parámetros de entrenamiento"""

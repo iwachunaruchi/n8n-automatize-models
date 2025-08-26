@@ -513,8 +513,8 @@ async def run_layer2_training(job_id: str, num_epochs: int, max_pairs: int,
         
         job["progress"] = 20
         
-        # Crear trainer
-        trainer = create_layer2_trainer("http://localhost:8000")
+        # Crear trainer (usa servicios directos, sin URL)
+        trainer = create_layer2_trainer()
         
         job["progress"] = 30
         
