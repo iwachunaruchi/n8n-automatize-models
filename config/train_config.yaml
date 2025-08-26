@@ -1,0 +1,68 @@
+# Configuración de entrenamiento para Restormer
+model:
+  inp_channels: 3
+  out_channels: 3
+  dim: 48
+  num_blocks: [4, 6, 6, 8]
+  num_refinement_blocks: 4
+  heads: [1, 2, 4, 8]
+  ffn_expansion_factor: 2.66
+  bias: false
+  LayerNorm_type: 'WithBias'
+  dual_pixel_task: false
+
+data:
+  train_degraded: 'data/train/degraded'
+  train_clean: 'data/train/clean'
+  val_degraded: 'data/val/degraded'
+  val_clean: 'data/val/clean'
+  image_size: [256, 256] # [height, width]
+
+training:
+  epochs: 300
+  batch_size: 8
+  learning_rate: 0.0002
+  weight_decay: 0.0001
+  num_workers: 4
+
+  # Directorios de salida
+  checkpoint_dir: 'outputs/checkpoints'
+  sample_dir: 'outputs/samples'
+
+  # Frecuencia de guardado
+  save_freq: 10
+
+  # Validación
+  val_freq: 5
+
+# Configuración de data augmentation
+augmentation:
+  horizontal_flip: 0.5
+  vertical_flip: 0.5
+  random_rotate90: 0.5
+  brightness_contrast: 0.3
+  noise: 0.3
+
+# Configuración de pérdidas
+loss:
+  l1_weight: 1.0
+  edge_weight: 0.1
+  perceptual_weight: 0.0 # Opcional: pérdida perceptual
+
+# Configuración del optimizador
+optimizer:
+  type: 'adam'
+  betas: [0.9, 0.999]
+  eps: 1e-8
+
+# Configuración del scheduler
+scheduler:
+  type: 'cosine'
+  T_max: 300 # Debe coincidir con epochs
+  eta_min: 1e-7
+
+# Configuración de logging
+logging:
+  log_freq: 50
+  tensorboard: true
+  save_samples: true

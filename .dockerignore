@@ -1,0 +1,37 @@
+# Archivos y directorios a ignorar en Docker build
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+venv_3.11/
+.venv/
+.git/
+.gitignore
+README.md
+*.md
+.pytest_cache/
+.coverage
+.nyc_output/
+node_modules/
+npm-debug.log*
+.npm
+.DS_Store
+.vscode/
+*.log
+
+# Archivos temporales
+*.tmp
+*.temp
+temp/
+tmp/
+
+# Outputs que se regeneran
+outputs/analysis/
+outputs/samples/
+outputs/evaluation/
+
+# Legacy files no necesarios en container
+legacy/

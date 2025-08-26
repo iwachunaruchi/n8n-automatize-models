@@ -1,0 +1,77 @@
+# Configuración del pipeline de restauración
+restormer:
+  inp_channels: 3
+  out_channels: 3
+  dim: 48
+  num_blocks: [4, 6, 6, 8]
+  num_refinement_blocks: 4
+  heads: [1, 2, 4, 8]
+  ffn_expansion_factor: 2.66
+  bias: false
+
+esrgan:
+  num_in_ch: 3
+  num_out_ch: 3
+  scale: 4
+  num_feat: 64
+  num_block: 23
+  num_grow_ch: 32
+
+processing:
+  # Tamaño máximo de imagen para procesamiento directo
+  max_size: 1024
+
+  # Configuración de tiles para imágenes grandes
+  tile_size: 512
+  tile_overlap: 64
+
+  # Control del uso de ESRGAN
+  use_esrgan: false
+  esrgan_threshold: 0.7 # Solo usar ESRGAN si la calidad es menor a este umbral
+
+  # Formatos de imagen soportados
+  supported_formats: ['.jpg', '.jpeg', '.png', '.tiff', '.tif', '.bmp']
+
+  # Configuración de postprocesamiento
+  postprocess:
+    sharpen: false
+    denoise: false
+    gamma_correction: 1.0
+
+# Configuración de calidad
+quality_assessment:
+  # Métrica de nitidez (Laplaciano)
+  sharpness_weight: 1.0
+
+  # Métrica de contraste
+  contrast_weight: 0.5
+
+  # Métrica de ruido
+  noise_weight: 0.3
+
+# Configuración de OCR (opcional)
+ocr:
+  enabled: false
+  engine: 'tesseract'
+  languages: ['spa', 'eng'] # español e inglés
+  confidence_threshold: 60
+
+# Configuración de salida
+output:
+  # Calidad de compresión para JPEG
+  jpeg_quality: 95
+
+  # Formato de salida por defecto
+  default_format: 'png'
+
+  # Guardar metadatos
+  save_metadata: true
+
+  # Crear copias de respaldo
+  create_backup: false
+
+# Configuración de logging
+logging:
+  level: 'INFO'
+  save_logs: true
+  log_file: 'outputs/pipeline.log'
