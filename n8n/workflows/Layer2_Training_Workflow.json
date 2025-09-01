@@ -1,0 +1,524 @@
+{
+  "name": "Layer 2 Training Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "start-layer2-training",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-start",
+      "name": "Webhook - Start Training",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        200,
+        300
+      ],
+      "webhookId": "layer2-training-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Validar y configurar parámetros de entrenamiento\nconst inputData = $input.first().json;\n\n// Parámetros por defecto\nconst defaultParams = {\n  num_epochs: 10,\n  max_pairs: 100,\n  batch_size: 2,\n  use_training_bucket: true\n};\n\n// Combinar con parámetros recibidos\nconst trainingParams = {\n  num_epochs: inputData.num_epochs || defaultParams.num_epochs,\n  max_pairs: inputData.max_pairs || defaultParams.max_pairs,\n  batch_size: inputData.batch_size || defaultParams.batch_size,\n  use_training_bucket: inputData.use_training_bucket !== undefined ? inputData.use_training_bucket : defaultParams.use_training_bucket\n};\n\n// Validaciones\nif (trainingParams.num_epochs < 1 || trainingParams.num_epochs > 100) {\n  throw new Error('num_epochs debe estar entre 1 y 100');\n}\n\nif (trainingParams.max_pairs < 10 || trainingParams.max_pairs > 1000) {\n  throw new Error('max_pairs debe estar entre 10 y 1000');\n}\n\nif (trainingParams.batch_size < 1 || trainingParams.batch_size > 8) {\n  throw new Error('batch_size debe estar entre 1 y 8');\n}\n\nreturn {\n  trainingParams,\n  timestamp: new Date().toISOString(),\n  workflow_id: 'layer2-training-' + Date.now()\n};"
+      },
+      "id": "validate-params",
+      "name": "Validate Training Parameters",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        400,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "http://localhost:8000/training/layer2/data-status",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "check-data-status",
+      "name": "Check Data Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        600,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "data-check",
+              "leftValue": "={{ $json.ready_for_training }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "name": "filter.operator.true"
+              }
+            },
+            {
+              "id": "min-pairs-check",
+              "leftValue": "={{ $json.statistics.valid_pairs }}",
+              "rightValue": 10,
+              "operator": {
+                "type": "number",
+                "operation": "gte",
+                "name": "filter.operator.gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "data-ready-check",
+      "name": "Data Ready Check",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        800,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:8000/training/layer2/prepare-data",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "target_pairs",
+              "value": "={{ $('Validate Training Parameters').item.json.trainingParams.max_pairs }}"
+            },
+            {
+              "name": "source_bucket",
+              "value": "document-clean"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "prepare-data",
+      "name": "Prepare Training Data",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1000,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:8000/training/layer2/train",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "num_epochs",
+              "value": "={{ $('Validate Training Parameters').item.json.trainingParams.num_epochs }}"
+            },
+            {
+              "name": "max_pairs",
+              "value": "={{ $('Validate Training Parameters').item.json.trainingParams.max_pairs }}"
+            },
+            {
+              "name": "batch_size",
+              "value": "={{ $('Validate Training Parameters').item.json.trainingParams.batch_size }}"
+            },
+            {
+              "name": "use_training_bucket",
+              "value": "={{ $('Validate Training Parameters').item.json.trainingParams.use_training_bucket }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "start-training",
+      "name": "Start Layer 2 Training",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1000,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extraer job_id del entrenamiento iniciado\nconst trainingResponse = $input.first().json;\nconst jobId = trainingResponse.job_id;\n\nif (!jobId) {\n  throw new Error('No se pudo obtener job_id del entrenamiento');\n}\n\nreturn {\n  job_id: jobId,\n  training_info: trainingResponse,\n  start_time: new Date().toISOString()\n};"
+      },
+      "id": "extract-job-id",
+      "name": "Extract Job ID",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "unit": "seconds",
+        "amount": 30
+      },
+      "id": "wait-30s",
+      "name": "Wait 30 seconds",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1400,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "http://localhost:8000/training/status/{{ $('Extract Job ID').item.json.job_id }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "check-status",
+      "name": "Check Training Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1600,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "status-check",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "running",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "training-running-check",
+      "name": "Training Still Running?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1800,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "completed-check",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "completed",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "training-completed-check",
+      "name": "Training Completed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2000,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "http://localhost:8000/training/results/{{ $('Extract Job ID').item.json.job_id }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "get-results",
+      "name": "Get Training Results",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2200,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\n  \"status\": \"success\",\n  \"message\": \"Entrenamiento de Capa 2 completado exitosamente\",\n  \"job_id\": \"={{ $('Extract Job ID').item.json.job_id }}\",\n  \"training_results\": {{ $json }},\n  \"workflow_id\": \"={{ $('Validate Training Parameters').item.json.workflow_id }}\",\n  \"completed_at\": \"={{ new Date().toISOString() }}\"\n}",
+        "options": {}
+      },
+      "id": "success-response",
+      "name": "Success Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        2400,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\n  \"status\": \"error\",\n  \"message\": \"Datos insuficientes para entrenamiento\",\n  \"data_status\": {{ $json }},\n  \"recommendations\": {\n    \"minimum_pairs\": 50,\n    \"current_pairs\": \"={{ $json.statistics.valid_pairs }}\",\n    \"action\": \"Generar más pares de entrenamiento\"\n  },\n  \"workflow_id\": \"={{ $('Validate Training Parameters').item.json.workflow_id }}\"\n}",
+        "options": {}
+      },
+      "id": "insufficient-data-response",
+      "name": "Insufficient Data Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1000,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\n  \"status\": \"failed\",\n  \"message\": \"Error durante el entrenamiento\",\n  \"job_id\": \"={{ $('Extract Job ID').item.json.job_id }}\",\n  \"error_details\": {{ $json }},\n  \"workflow_id\": \"={{ $('Validate Training Parameters').item.json.workflow_id }}\",\n  \"failed_at\": \"={{ new Date().toISOString() }}\"\n}",
+        "options": {}
+      },
+      "id": "error-response",
+      "name": "Error Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        2200,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\n  \"status\": \"in_progress\",\n  \"message\": \"Entrenamiento en progreso\",\n  \"job_id\": \"={{ $('Extract Job ID').item.json.job_id }}\",\n  \"current_status\": {{ $json }},\n  \"workflow_id\": \"={{ $('Validate Training Parameters').item.json.workflow_id }}\",\n  \"check_status_url\": \"http://localhost:8000/training/status/{{ $('Extract Job ID').item.json.job_id }}\"\n}",
+        "options": {}
+      },
+      "id": "progress-response",
+      "name": "Progress Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1800,
+        600
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook - Start Training": {
+      "main": [
+        [
+          {
+            "node": "Validate Training Parameters",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Training Parameters": {
+      "main": [
+        [
+          {
+            "node": "Check Data Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Data Status": {
+      "main": [
+        [
+          {
+            "node": "Data Ready Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Data Ready Check": {
+      "main": [
+        [
+          {
+            "node": "Prepare Training Data",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Start Layer 2 Training",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Insufficient Data Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Training Data": {
+      "main": [
+        [
+          {
+            "node": "Start Layer 2 Training",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Start Layer 2 Training": {
+      "main": [
+        [
+          {
+            "node": "Extract Job ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Job ID": {
+      "main": [
+        [
+          {
+            "node": "Wait 30 seconds",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait 30 seconds": {
+      "main": [
+        [
+          {
+            "node": "Check Training Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Training Status": {
+      "main": [
+        [
+          {
+            "node": "Training Still Running?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Training Still Running?": {
+      "main": [
+        [
+          {
+            "node": "Progress Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Training Completed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Training Completed?": {
+      "main": [
+        [
+          {
+            "node": "Get Training Results",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Training Results": {
+      "main": [
+        [
+          {
+            "node": "Success Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "layer2-training-v1.0",
+  "meta": {
+    "templateCreatedBy": "layer2-training-system",
+    "instanceId": "layer2-training-workflow"
+  },
+  "id": "layer2-training-workflow",
+  "tags": []
+}
