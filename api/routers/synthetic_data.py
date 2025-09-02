@@ -1,15 +1,30 @@
 """
 Router para generación de datos sintéticos
+REFACTORIZADO: Usa synthetic_data_service y jobs_service, sin HTTP requests internos
 """
 from fastapi import APIRouter, HTTPException, BackgroundTasks, UploadFile, File
 from fastapi.responses import JSONResponse, StreamingResponse
-from services import synthetic_data_service, minio_service
-from models.schemas import ProcessingJob
-from config import BUCKETS, jobs_state
-import uuid
-import io
 import logging
-from datetime import datetime
+import sys
+import io
+
+# Asegurar imports
+sys.path.append('/app/api')
+
+try:
+    from services.synthetic_data_service import synthetic_data_service
+    from services.jobs_service import jobs_service
+    from config.constants import SYNTHETIC_DATA_CONFIG, BUCKETS, RESPONSE_MESSAGES, FILE_CONFIG
+    SERVICES_AVAILABLE = True
+except ImportError as e:
+    logging.error(f"Error importando servicios en synthetic_data router: {e}")
+    synthetic_data_service = None
+    jobs_service = None
+    SERVICES_AVAILABLE = False
+    SYNTHETIC_DATA_CONFIG = {}
+    BUCKETS = {}
+    RESPONSE_MESSAGES = {}
+    FILE_CONFIG = {"MAX_SIZE": 50 * 1024 * 1024}
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/synthetic", tags=["Datos Sintéticos"])
@@ -20,32 +35,38 @@ async def add_noise_to_image(
     intensity: float = 0.1,
     file: UploadFile = File(...)
 ):
-    """Agregar ruido a una imagen"""
+    """Agregar ruido a una imagen usando synthetic_data_service"""
     try:
+        if not SERVICES_AVAILABLE:
+            raise HTTPException(status_code=503, detail="Servicios de datos sintéticos no disponibles")
+        
         # Validar archivo
         if not file.content_type.startswith('image/'):
             raise HTTPException(status_code=400, detail="Solo se permiten imágenes")
         
-        # Validar parámetros
-        if noise_type not in ["gaussian", "salt_pepper", "blur"]:
-            raise HTTPException(status_code=400, detail="Tipo de ruido no válido")
-        
-        if not 0.01 <= intensity <= 1.0:
-            raise HTTPException(status_code=400, detail="Intensidad debe estar entre 0.01 y 1.0")
-        
-        # Leer archivo
+        # Validar tamaño
         file_data = await file.read()
+        if len(file_data) > FILE_CONFIG["MAX_SIZE"]:
+            raise HTTPException(status_code=413, detail="Archivo demasiado grande")
         
-        # Aplicar ruido
-        noisy_data = synthetic_data_service.add_noise(file_data, noise_type, intensity)
+        # Aplicar ruido usando el servicio
+        result = synthetic_data_service.add_noise(file_data, noise_type, intensity)
+        
+        if result["status"] == "error":
+            if result.get("error_code") in ["INVALID_NOISE_TYPE", "INVALID_INTENSITY"]:
+                raise HTTPException(status_code=400, detail=result["message"])
+            else:
+                raise HTTPException(status_code=500, detail=result["message"])
         
         # Retornar imagen con ruido
         return StreamingResponse(
-            io.BytesIO(noisy_data),
+            io.BytesIO(result["data"]),
             media_type="image/png",
             headers={"Content-Disposition": f"attachment; filename=noisy_{file.filename}"}
         )
         
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error agregando ruido: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -55,8 +76,11 @@ async def degrade_image(
     degradation_type: str = "mixed",
     file: UploadFile = File(...)
 ):
-    """Degradar imagen limpia"""
+    """Degradar imagen limpia usando synthetic_data_service"""
     try:
+        if not SERVICES_AVAILABLE:
+            raise HTTPException(status_code=503, detail="Servicios de datos sintéticos no disponibles")
+        
         # Validar archivo
         if not file.content_type.startswith('image/'):
             raise HTTPException(status_code=400, detail="Solo se permiten imágenes")
@@ -64,23 +88,26 @@ async def degrade_image(
         # Leer archivo
         file_data = await file.read()
         
-        # Degradar imagen
-        degraded_data = synthetic_data_service.generate_degraded_version(file_data, degradation_type)
+        if len(file_data) > FILE_CONFIG["MAX_SIZE"]:
+            raise HTTPException(status_code=413, detail="Archivo demasiado grande")
         
-        # Subir original y degradada
-        original_filename = f"clean_{uuid.uuid4()}.png"
-        degraded_filename = f"degraded_{uuid.uuid4()}.png"
+        # Degradar imagen usando el servicio
+        result = synthetic_data_service.generate_degraded_version(file_data, degradation_type)
         
-        minio_service.upload_file(file_data, BUCKETS['clean'], original_filename)
-        minio_service.upload_file(degraded_data, BUCKETS['degraded'], degraded_filename)
+        if result["status"] == "error":
+            if result.get("error_code") in ["INVALID_DEGRADATION_TYPE", "DECODE_ERROR"]:
+                raise HTTPException(status_code=400, detail=result["message"])
+            else:
+                raise HTTPException(status_code=500, detail=result["message"])
         
         return JSONResponse({
             "status": "success",
-            "original_file": original_filename,
-            "degraded_file": degraded_filename,
-            "degradation_type": degradation_type
+            "message": result["message"],
+            "result": result["result"]
         })
         
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error degradando imagen: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -91,34 +118,48 @@ async def generate_training_pairs(
     clean_bucket: str,
     count: int = 10
 ):
-    """Generar pares de entrenamiento"""
+    """Generar pares de entrenamiento usando servicios"""
     try:
-        # Validar parámetros
-        if count < 1 or count > 1000:
-            raise HTTPException(status_code=400, detail="Count debe estar entre 1 y 1000")
+        if not SERVICES_AVAILABLE:
+            raise HTTPException(status_code=503, detail="Servicios de datos sintéticos no disponibles")
         
-        # Crear job
-        job_id = str(uuid.uuid4())
-        job = ProcessingJob(
-            job_id=job_id,
-            status="pending",
-            created_at=datetime.now(),
-            input_file=clean_bucket,
-            generation_type="training_pairs",
-            generated_count=0
+        # Validar parámetros usando constantes
+        count_limits = SYNTHETIC_DATA_CONFIG.get("COUNT_LIMITS", {"min": 1, "max": 1000})
+        if count < count_limits["min"] or count > count_limits["max"]:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Count debe estar entre {count_limits['min']} y {count_limits['max']}"
+            )
+        
+        # Validar bucket
+        if clean_bucket not in BUCKETS.values():
+            raise HTTPException(status_code=400, detail="Bucket no válido")
+        
+        # Crear trabajo usando jobs_service
+        job_result = jobs_service.create_job(
+            "training_pairs_generation",
+            clean_bucket=clean_bucket,
+            requested_count=count
         )
-        jobs_state[job_id] = job
+        
+        if job_result["status"] == "error":
+            raise HTTPException(status_code=500, detail=job_result["message"])
+        
+        job_id = job_result["job_id"]
         
         # Procesar en background
-        background_tasks.add_task(process_training_pairs, job_id, clean_bucket, count)
+        background_tasks.add_task(process_training_pairs_with_service, job_id, clean_bucket, count)
         
         return JSONResponse({
             "job_id": job_id,
             "status": "pending",
             "requested_count": count,
-            "source_bucket": clean_bucket
+            "source_bucket": clean_bucket,
+            "message": RESPONSE_MESSAGES.get("job_created", "Trabajo creado exitosamente")
         })
         
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error iniciando generación de pares: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -129,113 +170,165 @@ async def augment_dataset(
     bucket: str,
     target_count: int = 100
 ):
-    """Aumentar dataset mediante augmentación"""
+    """Aumentar dataset mediante augmentación usando servicios"""
     try:
+        if not SERVICES_AVAILABLE:
+            raise HTTPException(status_code=503, detail="Servicios de datos sintéticos no disponibles")
+        
         # Validar bucket
         if bucket not in BUCKETS.values():
             raise HTTPException(status_code=400, detail="Bucket no válido")
         
-        # Validar parámetros
-        if target_count < 10 or target_count > 10000:
-            raise HTTPException(status_code=400, detail="Target count debe estar entre 10 y 10000")
+        # Validar parámetros usando constantes
+        count_limits = SYNTHETIC_DATA_CONFIG.get("COUNT_LIMITS", {"augment_min": 10, "augment_max": 10000})
+        if target_count < count_limits["augment_min"] or target_count > count_limits["augment_max"]:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Target count debe estar entre {count_limits['augment_min']} y {count_limits['augment_max']}"
+            )
         
-        # Crear job
-        job_id = str(uuid.uuid4())
-        job = ProcessingJob(
-            job_id=job_id,
-            status="pending",
-            created_at=datetime.now(),
-            input_file=bucket,
-            generation_type="augmentation",
-            generated_count=0
+        # Crear trabajo usando jobs_service
+        job_result = jobs_service.create_job(
+            "dataset_augmentation",
+            bucket=bucket,
+            target_count=target_count
         )
-        jobs_state[job_id] = job
+        
+        if job_result["status"] == "error":
+            raise HTTPException(status_code=500, detail=job_result["message"])
+        
+        job_id = job_result["job_id"]
         
         # Procesar en background
-        background_tasks.add_task(process_augmentation, job_id, bucket, target_count)
+        background_tasks.add_task(process_augmentation_with_service, job_id, bucket, target_count)
         
         return JSONResponse({
             "job_id": job_id,
             "status": "pending",
             "target_count": target_count,
-            "bucket": bucket
+            "bucket": bucket,
+            "message": RESPONSE_MESSAGES.get("job_created", "Trabajo creado exitosamente")
         })
         
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error iniciando augmentación: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/stats/{bucket}")
 async def get_dataset_stats(bucket: str):
-    """Obtener estadísticas del dataset"""
+    """Obtener estadísticas del dataset usando synthetic_data_service"""
     try:
-        # Validar bucket
-        if bucket not in BUCKETS.values():
-            raise HTTPException(status_code=400, detail="Bucket no válido")
+        if not SERVICES_AVAILABLE:
+            raise HTTPException(status_code=503, detail="Servicios de datos sintéticos no disponibles")
         
-        # Contar archivos
-        files = minio_service.list_files(bucket)
+        result = synthetic_data_service.get_dataset_stats(bucket)
         
-        # Estadísticas básicas
-        stats = {
-            "bucket": bucket,
-            "total_files": len(files),
-            "file_types": {}
-        }
-        
-        # Contar por tipo de archivo
-        for filename in files:
-            if filename.startswith('clean_'):
-                stats["file_types"]["clean"] = stats["file_types"].get("clean", 0) + 1
-            elif filename.startswith('degraded_'):
-                stats["file_types"]["degraded"] = stats["file_types"].get("degraded", 0) + 1
-            elif filename.startswith('aug_'):
-                stats["file_types"]["augmented"] = stats["file_types"].get("augmented", 0) + 1
-            elif filename.startswith('restored_'):
-                stats["file_types"]["restored"] = stats["file_types"].get("restored", 0) + 1
+        if result["status"] == "error":
+            if result.get("error_code") == "INVALID_BUCKET":
+                raise HTTPException(status_code=400, detail=result["message"])
+            elif result.get("error_code") == "MINIO_UNAVAILABLE":
+                raise HTTPException(status_code=503, detail=result["message"])
             else:
-                stats["file_types"]["other"] = stats["file_types"].get("other", 0) + 1
+                raise HTTPException(status_code=500, detail=result["message"])
         
-        return JSONResponse(stats)
+        return JSONResponse(result["statistics"])
         
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error obteniendo estadísticas: {e}")
+        logger.error(f"Error obteniendo estadísticas de {bucket}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-async def process_training_pairs(job_id: str, clean_bucket: str, count: int):
-    """Procesar generación de pares de entrenamiento"""
+@router.get("/info")
+async def get_synthetic_data_info():
+    """Obtener información del servicio de datos sintéticos"""
     try:
-        # Actualizar estado
-        jobs_state[job_id].status = "processing"
+        if not SERVICES_AVAILABLE:
+            return JSONResponse({
+                "status": "error",
+                "message": "Servicios de datos sintéticos no disponibles"
+            })
         
-        # Generar pares
+        return JSONResponse(synthetic_data_service.get_service_info())
+        
+    except Exception as e:
+        logger.error(f"Error obteniendo información de datos sintéticos: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ===============================================
+# FUNCIONES DE PROCESAMIENTO EN BACKGROUND
+# ===============================================
+
+async def process_training_pairs_with_service(job_id: str, clean_bucket: str, count: int):
+    """Procesar generación de pares de entrenamiento usando synthetic_data_service"""
+    try:
+        # Actualizar estado del trabajo
+        jobs_service.update_job_status(job_id, "processing", progress=10)
+        
+        # Generar pares usando el servicio
         result = synthetic_data_service.generate_training_pairs(clean_bucket, count)
         
-        # Actualizar estado final
-        jobs_state[job_id].status = "completed"
-        jobs_state[job_id].completed_at = datetime.now()
-        jobs_state[job_id].generated_count = result["generated_count"]
+        if result["status"] == "success":
+            # Actualizar estado final exitoso
+            jobs_service.update_job_status(
+                job_id, 
+                "completed", 
+                progress=100,
+                result=result,
+                generated_count=result["generated_count"]
+            )
+        else:
+            # Actualizar estado de error
+            jobs_service.update_job_status(
+                job_id, 
+                "failed", 
+                progress=0,
+                error=result["message"]
+            )
         
     except Exception as e:
         logger.error(f"Error procesando pares {job_id}: {e}")
-        jobs_state[job_id].status = "failed"
-        jobs_state[job_id].error = str(e)
+        jobs_service.update_job_status(
+            job_id, 
+            "failed", 
+            progress=0,
+            error=str(e)
+        )
 
-async def process_augmentation(job_id: str, bucket: str, target_count: int):
-    """Procesar augmentación de dataset"""
+async def process_augmentation_with_service(job_id: str, bucket: str, target_count: int):
+    """Procesar augmentación de dataset usando synthetic_data_service"""
     try:
-        # Actualizar estado
-        jobs_state[job_id].status = "processing"
+        # Actualizar estado del trabajo
+        jobs_service.update_job_status(job_id, "processing", progress=10)
         
-        # Realizar augmentación
+        # Realizar augmentación usando el servicio
         result = synthetic_data_service.augment_dataset(bucket, target_count)
         
-        # Actualizar estado final
-        jobs_state[job_id].status = "completed"
-        jobs_state[job_id].completed_at = datetime.now()
-        jobs_state[job_id].generated_count = result["generated_count"]
+        if result["status"] == "success":
+            # Actualizar estado final exitoso
+            jobs_service.update_job_status(
+                job_id, 
+                "completed", 
+                progress=100,
+                result=result,
+                generated_count=result["generated_count"]
+            )
+        else:
+            # Actualizar estado de error
+            jobs_service.update_job_status(
+                job_id, 
+                "failed", 
+                progress=0,
+                error=result["message"]
+            )
         
     except Exception as e:
         logger.error(f"Error procesando augmentación {job_id}: {e}")
-        jobs_state[job_id].status = "failed"
-        jobs_state[job_id].error = str(e)
+        jobs_service.update_job_status(
+            job_id, 
+            "failed", 
+            progress=0,
+            error=str(e)
+        )

@@ -118,7 +118,25 @@ RESPONSE_MESSAGES = {
     "job_created": "Trabajo creado exitosamente",
     "job_updated": "Trabajo actualizado exitosamente",
     "job_deleted": "Trabajo eliminado exitosamente",
-    "batch_restore_completed": "Restauración por lotes completada"
+    "batch_restore_completed": "Restauración por lotes completada",
+    "synthetic_data_generated": "Datos sintéticos generados exitosamente",
+    "noise_applied": "Ruido aplicado exitosamente",
+    "degradation_completed": "Degradación completada exitosamente",
+    "training_pairs_generated": "Pares de entrenamiento generados exitosamente",
+    "augmentation_completed": "Augmentación del dataset completada"
+}
+
+# ===== CONFIGURACIÓN DE DATOS SINTÉTICOS =====
+SYNTHETIC_DATA_CONFIG = {
+    "NOISE_TYPES": ["gaussian", "salt_pepper", "blur", "speckle", "poisson"],
+    "DEGRADATION_TYPES": ["mixed", "blur", "noise", "compression", "distortion", "aging"],
+    "INTENSITY_RANGE": {"min": 0.01, "max": 1.0},
+    "COUNT_LIMITS": {"min": 1, "max": 1000, "augment_min": 10, "augment_max": 10000},
+    "SUPPORTED_FORMATS": [".jpg", ".jpeg", ".png", ".tiff", ".bmp"],
+    "OUTPUT_FORMAT": "png",
+    "AUGMENTATION_TECHNIQUES": ["rotation", "flip", "brightness", "contrast", "noise", "blur"],
+    "QUALITY_LEVELS": ["low", "medium", "high", "ultra"],
+    "BATCH_SIZE": 8
 }
 
 # ===== CONFIGURACIÓN DE API =====
