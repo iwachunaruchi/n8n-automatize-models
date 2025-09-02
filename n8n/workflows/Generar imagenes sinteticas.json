@@ -1,0 +1,545 @@
+{
+  "name": "My workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\n  \"status\": \"error\",\n  \"message\": \"Only clean documents can generate synthetic training data\",\n  \"classification\": \"={{$('Analyze Document Only').item.json.body.document_type}}\",\n  \"uploaded_to\": \"={{$('Upload to Degraded Bucket').item.json.body.bucket}}\"\n}",
+        "options": {}
+      },
+      "id": "04ae8500-4c8a-4fae-89d9-b90aa9b53009",
+      "name": "Response - Error (Degraded)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        -624,
+        512
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.document_type }}",
+              "value2": "documento_limpio"
+            }
+          ]
+        }
+      },
+      "id": "54aa2805-f8c4-46f0-8edc-d60d3c92139e",
+      "name": "Check if Clean Document",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        -1568,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combinationMode": "mergeByPosition",
+        "options": {}
+      },
+      "id": "8edeb6e0-5ff5-434a-a107-087b22a83b89",
+      "name": "Merge Original Data",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 2.1,
+      "position": [
+        -1360,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "0a969238-cf34-497c-95c8-d247c004dffc",
+              "leftValue": "={{ $json.document_type }}",
+              "rightValue": "documento_limpio",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -1168,
+        304
+      ],
+      "id": "4df8238e-ed12-4f22-9556-b62ce227a728",
+      "name": "Route Based on Classification"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://doc-restoration-api:8000/synthetic/training-pairs",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "clean_bucket",
+              "value": "document-clean"
+            },
+            {
+              "name": "count",
+              "value": "10"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {}
+          ]
+        },
+        "options": {}
+      },
+      "id": "c040a8c7-bb7f-461c-87bc-40096626bde4",
+      "name": "Generate Training Pairs1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        -624,
+        176
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=http://doc-restoration-api:8000/jobs/{{ $json.job_id }}",
+        "options": {
+          "response": {
+            "response": {}
+          }
+        }
+      },
+      "id": "f21e6ac1-6eda-4980-a99c-eaf8627e2de3",
+      "name": "Check Generation Status1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        -224,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json.status}}",
+              "value2": "completed"
+            }
+          ]
+        }
+      },
+      "id": "ee1b6776-d4b6-47c2-a66b-d3861578bc12",
+      "name": "Check Completion1",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        0,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "amount": 5,
+        "unit": "seconds"
+      },
+      "id": "b458ae29-d6c6-4627-98c4-2ba11ef33fa2",
+      "name": "Wait1",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1,
+      "position": [
+        -224,
+        336
+      ],
+      "webhookId": "21ac7ea6-2897-47bf-8cce-e32c54127ac1"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\n  \"status\": \"success\",\n  \"message\": \"Synthetic data generation completed\",\n  \"classification\": \"={{$('Analyze Document Only').item.json.body.document_type}}\",\n  \"uploaded_to\": \"={{$('Upload to Clean Bucket').item.json.body.bucket}}\",\n  \"generated_pairs\": \"={{$json.total_files_created}}\",\n  \"target_bucket\": \"document-training\"\n}",
+        "options": {}
+      },
+      "id": "98d4de40-ea26-4705-8ea9-779d47bf6e4a",
+      "name": "Response - Success1",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        224,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "url": "http://doc-restoration-api:8000/synthetic/stats/document-training",
+        "options": {}
+      },
+      "id": "04ceee93-89e4-453c-b912-39f156646e44",
+      "name": "Update Dataset Stats1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://doc-restoration-api:8000/files/upload",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "bucket",
+              "value": "document-clean"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "file",
+              "inputDataFieldName": "File"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "id": "7762ccac-faf6-4054-8c49-494ec1e3734c",
+      "name": "Upload to Clean Bucket1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -896,
+        176
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://doc-restoration-api:8000/files/upload",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "bucket",
+              "value": "document-degraded"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "file",
+              "inputDataFieldName": "File"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "id": "0d8d7c3a-3e0a-479d-9c2f-3926a5f024e0",
+      "name": "Upload to Degraded Bucket1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -896,
+        432
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "data-generation",
+        "responseMode": "responseNode",
+        "options": {
+          "binaryData": false,
+          "rawBody": true
+        }
+      },
+      "id": "da02d43f-7a11-4440-8190-9101f2de5546",
+      "name": "Webhook - Data Upload1",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        -2128,
+        320
+      ],
+      "webhookId": "data-generation"
+    },
+    {
+      "parameters": {
+        "resource": "image",
+        "operation": "analyze",
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4o-mini",
+          "mode": "list",
+          "cachedResultName": "GPT-4O-MINI"
+        },
+        "text": "Responde siempre en español.\n\nAnaliza cuidadosamente la imagen proporcionada, que corresponde a un documento escaneado o fotografiado. Evalúa si el documento se encuentra en buen estado o presenta algún tipo de daño que afecte su legibilidad. \n\nTen en cuenta:\n- Documento limpio: sin manchas, arrugas, roturas, manchas de tinta, decoloración severa o partes faltantes.\n- Documento no legible: cualquier daño físico o digital que dificulte o impida la lectura completa del contenido (borroso, muy oscuro, con secciones faltantes, etc.).\n\nDevuelve la respuesta en el siguiente formato JSON, sin texto adicional:\n\n{\n  \"document_type\": \"documento_limpio\" \n}\n\no\n\n{\n  \"document_type\": \"documento_no_legible\"\n}\n",
+        "inputType": "base64",
+        "binaryPropertyName": "File",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.8,
+      "position": [
+        -1984,
+        160
+      ],
+      "id": "e880940b-3950-489e-a48f-d5c5daba8ebf",
+      "name": "Analyze image",
+      "credentials": {
+        "openAiApi": {
+          "id": "Tj8YW4wXFEcugEzI",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst results = [];\n\nfor (const item of items) {\n\t// Obtener el texto del campo content\n\tconst rawContent = item.json.content;\n\n\ttry {\n\t\t// Convertir el string JSON en objeto\n\t\tconst parsed = JSON.parse(rawContent);\n\n\t\t// Devolver el objeto como salida\n\t\tresults.push({ json: parsed });\n\t} catch (error) {\n\t\t// En caso de error de parseo, devolver mensaje de error\n\t\tresults.push({\n\t\t\tjson: {\n\t\t\t\terror: 'No se pudo parsear el contenido',\n\t\t\t\traw: rawContent\n\t\t\t}\n\t\t});\n\t}\n}\n\nreturn results;\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1776,
+        160
+      ],
+      "id": "d7982ddb-7f35-4b21-abef-95d5882aed6e",
+      "name": "Code"
+    },
+    {
+      "parameters": {
+        "content": "## Keys\n**OpenIa**\n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",
+        "width": 672
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -2496,
+        -48
+      ],
+      "typeVersion": 1,
+      "id": "7f21d9f7-95e7-4251-a6bd-8acd1df513bf",
+      "name": "Sticky Note"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Check if Clean Document": {
+      "main": [
+        [
+          {
+            "node": "Merge Original Data",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Merge Original Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Original Data": {
+      "main": [
+        [
+          {
+            "node": "Route Based on Classification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route Based on Classification": {
+      "main": [
+        [
+          {
+            "node": "Upload to Clean Bucket1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Upload to Degraded Bucket1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Generation Status1": {
+      "main": [
+        [
+          {
+            "node": "Check Completion1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Completion1": {
+      "main": [
+        [
+          {
+            "node": "Update Dataset Stats1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wait1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait1": {
+      "main": [
+        [
+          {
+            "node": "Check Generation Status1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Dataset Stats1": {
+      "main": [
+        [
+          {
+            "node": "Response - Success1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload to Clean Bucket1": {
+      "main": [
+        [
+          {
+            "node": "Generate Training Pairs1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload to Degraded Bucket1": {
+      "main": [
+        [
+          {
+            "node": "Response - Error (Degraded)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook - Data Upload1": {
+      "main": [
+        [
+          {
+            "node": "Merge Original Data",
+            "type": "main",
+            "index": 1
+          },
+          {
+            "node": "Analyze image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze image": {
+      "main": [
+        [
+          {
+            "node": "Code",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code": {
+      "main": [
+        [
+          {
+            "node": "Check if Clean Document",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "b5f1db4f-5b3b-4aa9-a590-0c03b3635067",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "67b1187f31e922e3f54c09778fb5959458e85676e60d9d2b752bdd4c55880925"
+  },
+  "id": "NNbO8vJ4PAbj1MBY",
+  "tags": []
+}

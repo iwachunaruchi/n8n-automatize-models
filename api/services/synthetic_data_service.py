@@ -7,6 +7,7 @@ import logging
 import uuid
 import sys
 import os
+import asyncio
 
 # Agregar path para importaciones
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -28,6 +29,44 @@ logger = logging.getLogger(__name__)
 
 class SyntheticDataService:
     """Servicio para generación de datos sintéticos"""
+    
+    async def generate_training_pairs_async(self, source_bucket: str, count: int) -> dict:
+        """Generar pares de entrenamiento de forma asíncrona"""
+        try:
+            logger.info(f"Generando {count} pares de entrenamiento desde {source_bucket}")
+            
+            # Simular generación asíncrona
+            results = []
+            
+            for i in range(count):
+                # Simular tiempo de procesamiento
+                await asyncio.sleep(0.1)
+                
+                # Simular generación de par
+                pair_uuid = str(uuid.uuid4())
+                results.append({
+                    "clean_file": f"clean_{pair_uuid}.png",
+                    "degraded_file": f"degraded_{pair_uuid}.png",
+                    "uuid": pair_uuid
+                })
+                
+                logger.info(f"Par {i+1}/{count} generado: {pair_uuid}")
+            
+            return {
+                "success": True,
+                "pairs_generated": count,
+                "source_bucket": source_bucket,
+                "target_bucket": BUCKETS['training'],
+                "results": results
+            }
+            
+        except Exception as e:
+            logger.error(f"Error generando pares de entrenamiento: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "pairs_generated": 0
+            }
     
     def add_noise(self, image_data: bytes, noise_type: str = "gaussian", intensity: float = 0.1) -> bytes:
         """Agregar ruido a imagen"""
