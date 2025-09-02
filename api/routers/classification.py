@@ -3,176 +3,155 @@ Router para endpoints de clasificación de documentos
 """
 from fastapi import APIRouter, UploadFile, File, HTTPException
 from fastapi.responses import JSONResponse
-import uuid
 import logging
-import sys
-import os
+from typing import List
 
-# Agregar path para importaciones
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
+# Importaciones con fallbacks mejorados
 try:
-    from services.image_analysis_service import image_analysis_service
-    from services.minio_service import minio_service
-    from config.settings import BUCKETS
-except ImportError as e:
-    logging.warning(f"Error importando dependencias en classification router: {e}")
-    image_analysis_service = None
-    minio_service = None
-    BUCKETS = {'degraded': 'document-degraded', 'clean': 'document-clean'}
+    from services.classification_service import classification_service
+    from config.constants import RESPONSE_MESSAGES, FILE_CONFIG
+except ImportError:
+    try:
+        # Importación alternativa 
+        import sys
+        import os
+        sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        from services.classification_service import classification_service
+        from config.constants import RESPONSE_MESSAGES, FILE_CONFIG
+    except ImportError as e:
+        logging.warning(f"Error importando dependencias en classification router: {e}")
+        classification_service = None
+        RESPONSE_MESSAGES = {"service_unavailable": "Servicio no disponible"}
+        FILE_CONFIG = {"MAX_SIZE": 50 * 1024 * 1024}
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/classify", tags=["Clasificación"])
 
 @router.post("/document")
 async def classify_document(file: UploadFile = File(...)):
-    """Clasificar tipo de documento"""
+    """Clasificar tipo de documento y subirlo al bucket apropiado"""
     try:
-        if image_analysis_service is None or minio_service is None:
-            raise HTTPException(status_code=503, detail="Servicios no disponibles")
+        # Verificar disponibilidad del servicio
+        if classification_service is None:
+            raise HTTPException(
+                status_code=503, 
+                detail=RESPONSE_MESSAGES.get("service_unavailable", "Servicio no disponible")
+            )
             
         # Validar archivo
-        if not file.content_type.startswith('image/'):
+        if not file.content_type or not file.content_type.startswith('image/'):
             raise HTTPException(status_code=400, detail="Solo se permiten imágenes")
         
-        # Leer archivo
+        # Validar tamaño
         file_data = await file.read()
+        if len(file_data) > FILE_CONFIG["MAX_SIZE"]:
+            raise HTTPException(status_code=413, detail="Archivo demasiado grande")
         
-        # Analizar imagen con el nuevo formato
-        analysis = image_analysis_service.analyze_image_quality(file_data)
-        classification_result = image_analysis_service.classify_document_type(file_data)
+        # Clasificar documento usando el servicio
+        result = classification_service.classify_document(file_data, file.filename)
         
-        # Extraer tipo de documento del resultado
-        document_type = classification_result.get("type", "unknown")
-        confidence = classification_result.get("confidence", 0.0)
-        details = classification_result.get("details", {})
+        return JSONResponse(content=result)
         
-        # Generar filename único
-        filename = f"{uuid.uuid4()}.png"
-        
-        # Subir a bucket correspondiente según clasificación
-        if document_type == "degraded":
-            bucket = BUCKETS['degraded']
-        elif document_type == "clean":
-            bucket = BUCKETS['clean']
-        else:
-            # Para casos unknown, usar degraded como fallback
-            bucket = BUCKETS['degraded']
-        
-        # Subir archivo solo si no hubo errores de memoria
-        uploaded_filename = None
-        upload_error = None
-        file_url = None
-        download_endpoint = None
-        
-        if "error" not in details:
-            try:
-                uploaded_filename = minio_service.upload_file(file_data, bucket, filename)
-                
-                # Generar URLs optimizadas para visualización
-                # URL directa MinIO con parámetros para visualización
-                file_url = f"http://localhost:9000/{bucket}/{uploaded_filename}?response-content-disposition=inline&response-content-type=image/png"
-                
-                # URL alternativa a través de la API con visualización
-                view_endpoint = f"/files/view/{bucket}/{uploaded_filename}"
-                download_endpoint = f"/files/download/{bucket}/{uploaded_filename}"
-                
-            except Exception as upload_e:
-                upload_error = str(upload_e)
-                logger.error(f"Error subiendo archivo: {upload_e}")
-        
-        return JSONResponse({
-            "status": "success" if "error" not in details else "partial",
-            "classification": {
-                "type": document_type,
-                "confidence": confidence,
-                "details": details
-            },
-            "analysis": analysis,
-            "upload": {
-                "bucket": bucket if uploaded_filename else None,
-                "filename": uploaded_filename,
-                "view_endpoint": view_endpoint, 
-                "file_url": file_url,                    # ✅ NUEVA: URL directa al archivo
-                "download_endpoint": download_endpoint,   # ✅ NUEVA: Endpoint de la API para descargar
-                "error": upload_error
-            },
-            "message": f"Documento clasificado como {document_type} (confianza: {confidence:.2f})"
-        })
-        
-    except MemoryError as e:
-        logger.error(f"Error de memoria clasificando documento: {e}")
-        return JSONResponse(
-            status_code=507,
-            content={
-                "status": "error",
-                "error": "Memoria insuficiente",
-                "message": "La imagen es demasiado grande para procesar. Intente con una imagen de menor resolución.",
-                "details": str(e)
-            }
-        )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error clasificando documento: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
 
 @router.post("/batch")
-async def classify_batch(bucket_name: str):
-    """Clasificar documentos en lote"""
+async def classify_batch(files: List[UploadFile] = File(...)):
+    """Clasificar múltiples documentos en lote"""
     try:
-        # Listar archivos en bucket
-        files = minio_service.list_files(bucket_name)
+        # Verificar disponibilidad del servicio
+        if classification_service is None:
+            raise HTTPException(
+                status_code=503, 
+                detail=RESPONSE_MESSAGES.get("service_unavailable", "Servicio no disponible")
+            )
         
-        results = []
-        for filename in files:
-            try:
-                # Descargar archivo
-                file_data = minio_service.download_file(bucket_name, filename)
+        # Validar que hay archivos
+        if not files:
+            raise HTTPException(status_code=400, detail="No se proporcionaron archivos")
+        
+        # Preparar datos para clasificación batch
+        files_data = []
+        for file in files:
+            # Validar tipo
+            if not file.content_type or not file.content_type.startswith('image/'):
+                logger.warning(f"Archivo {file.filename} no es imagen, saltando...")
+                continue
                 
-                # Clasificar con nuevo formato
-                classification_result = image_analysis_service.classify_document_type(file_data)
-                analysis = image_analysis_service.analyze_image_quality(file_data)
+            # Leer datos
+            file_data = await file.read()
+            
+            # Validar tamaño
+            if len(file_data) > FILE_CONFIG["MAX_SIZE"]:
+                logger.warning(f"Archivo {file.filename} demasiado grande, saltando...")
+                continue
                 
-                results.append({
-                    "filename": filename,
-                    "classification": classification_result,
-                    "analysis": analysis,
-                    "status": "success" if "error" not in classification_result.get("details", {}) else "error"
-                })
+            files_data.append((file_data, file.filename))
+        
+        if not files_data:
+            raise HTTPException(status_code=400, detail="No hay archivos válidos para procesar")
+        
+        # Procesar batch usando el servicio
+        result = classification_service.classify_batch(files_data)
+        
+        return JSONResponse(content=result)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error en clasificación batch: {e}")
+        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
 
-                
-                
-            except MemoryError as e:
-                logger.error(f"Error de memoria procesando {filename}: {e}")
-                results.append({
-                    "filename": filename,
-                    "status": "memory_error",
-                    "error": "Imagen demasiado grande para procesar"
-                })
-            except Exception as e:
-                logger.error(f"Error procesando {filename}: {e}")
-                results.append({
-                    "filename": filename,
-                    "status": "error",
-                    "error": str(e)
-                })
+@router.get("/stats")
+async def get_classification_stats():
+    """Obtener estadísticas de clasificación"""
+    try:
+        # Verificar disponibilidad del servicio
+        if classification_service is None:
+            raise HTTPException(
+                status_code=503, 
+                detail=RESPONSE_MESSAGES.get("service_unavailable", "Servicio no disponible")
+            )
         
-        # Contar resultados exitosos y con errores
-        successful = len([r for r in results if r.get("status") == "success"])
-        memory_errors = len([r for r in results if r.get("status") == "memory_error"])
-        other_errors = len([r for r in results if r.get("status") == "error"])
+        # Obtener estadísticas del servicio
+        stats = classification_service.get_classification_stats()
         
-        return JSONResponse({
-            "status": "completed",
-            "bucket": bucket_name,
-            "summary": {
-                "total_files": len(files),
-                "successful": successful,
-                "memory_errors": memory_errors,
-                "other_errors": other_errors
+        return JSONResponse(content=stats)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error obteniendo estadísticas: {e}")
+        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
+
+@router.get("/info")
+async def get_classification_info():
+    """Obtener información de configuración de clasificación"""
+    try:
+        from config.constants import CLASSIFICATION_CONFIG, BUCKETS
+        
+        info = {
+            "status": "active",
+            "service": "classification_service",
+            "configuration": {
+                "confidence_threshold": CLASSIFICATION_CONFIG["CONFIDENCE_THRESHOLD"],
+                "quality_thresholds": CLASSIFICATION_CONFIG["QUALITY_THRESHOLDS"],
+                "document_types": CLASSIFICATION_CONFIG["DOCUMENT_TYPES"],
+                "available_buckets": BUCKETS
             },
-            "results": results
-        })
+            "endpoints": [
+                {"path": "/classify/document", "method": "POST", "description": "Clasificar documento individual"},
+                {"path": "/classify/batch", "method": "POST", "description": "Clasificar múltiples documentos"},
+                {"path": "/classify/stats", "method": "GET", "description": "Estadísticas de clasificación"},
+                {"path": "/classify/info", "method": "GET", "description": "Información de configuración"}
+            ]
+        }
+        
+        return JSONResponse(content=info)
         
     except Exception as e:
-        logger.error(f"Error en clasificación en lote: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Error obteniendo información: {e}")
+        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
