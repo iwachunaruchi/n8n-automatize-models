@@ -36,7 +36,14 @@ PROCESSING_CONFIG = {
     "ANALYSIS_SIZE": 1024,   # Tamaño para análisis
     "SAMPLE_SIZE": 512,      # Tamaño para muestras
     "BATCH_SIZE": 4,         # Batch size para entrenamiento
-    "MAX_WORKERS": 4         # Workers para procesamiento paralelo
+    "MAX_WORKERS": 4,        # Workers para procesamiento paralelo
+    "MAX_PROCESSING_TIME": 300,  # Tiempo máximo de procesamiento en segundos
+    "SUPPORTED_FORMATS": [".jpg", ".jpeg", ".png", ".tiff", ".bmp"],
+    "OUTPUT_FORMAT": "png",
+    "QUALITY_SETTINGS": {"compression": 0.9, "dpi": 300},
+    "MAX_JOBS": 100,         # Máximo número de trabajos simultáneos
+    "JOB_TIMEOUT": 3600,     # Timeout para trabajos en segundos
+    "CLEANUP_INTERVAL": 86400  # Intervalo de limpieza en segundos (24h)
 }
 
 # ===== CONFIGURACIÓN DE ENTRENAMIENTO =====
@@ -106,7 +113,12 @@ RESPONSE_MESSAGES = {
     "upload_success": "Archivo subido exitosamente",
     "training_started": "Entrenamiento iniciado",
     "training_completed": "Entrenamiento completado",
-    "model_loaded": "Modelo cargado exitosamente"
+    "model_loaded": "Modelo cargado exitosamente",
+    "restore_success": "Documento restaurado exitosamente",
+    "job_created": "Trabajo creado exitosamente",
+    "job_updated": "Trabajo actualizado exitosamente",
+    "job_deleted": "Trabajo eliminado exitosamente",
+    "batch_restore_completed": "Restauración por lotes completada"
 }
 
 # ===== CONFIGURACIÓN DE API =====

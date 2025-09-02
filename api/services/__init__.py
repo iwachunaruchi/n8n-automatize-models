@@ -8,6 +8,8 @@ from .synthetic_data_service import synthetic_data_service
 from .training_service import training_service
 from .classification_service import classification_service
 from .file_management_service import file_management_service
+from .restoration_service import restoration_service
+from .jobs_service import jobs_service
 
 __all__ = [
     'minio_service',
@@ -16,5 +18,7 @@ __all__ = [
     'synthetic_data_service',
     'training_service',
     'classification_service',
-    'file_management_service'
+    'file_management_service',
+    'restoration_service',
+    'jobs_service'
 ]
