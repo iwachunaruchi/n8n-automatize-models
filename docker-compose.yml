@@ -19,6 +19,8 @@ services:
       interval: 30s
       timeout: 20s
       retries: 3
+    networks:
+      - doc-restoration-network
 
   # MinIO Client - Para configuración inicial
   minio-setup:
@@ -26,8 +28,11 @@ services:
     container_name: minio-setup
     depends_on:
       - minio
+    networks:
+      - doc-restoration-network
     entrypoint: >
       /bin/sh -c "
+      sleep 10;
       /usr/bin/mc alias set myminio http://minio:9000 minio minio123;
       /usr/bin/mc mb myminio/document-degraded || true;
       /usr/bin/mc mb myminio/document-clean || true;
@@ -37,7 +42,7 @@ services:
       /usr/bin/mc anonymous set public myminio/document-clean;
       /usr/bin/mc anonymous set public myminio/document-restored;
       /usr/bin/mc anonymous set public myminio/document-training;
-      echo 'Buckets creados y configurados como PÚBLICOS';
+      echo 'Buckets creados y configurados exitosamente';
       "
 
   # PostgreSQL - Para n8n
@@ -50,6 +55,8 @@ services:
       POSTGRES_PASSWORD: n8n123
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    networks:
+      - doc-restoration-network
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U n8n"]
       interval: 30s
@@ -80,45 +87,147 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    networks:
+      - doc-restoration-network
     healthcheck:
-      test: ["CMD-SHELL", "wget --spider -q http://localhost:5678/healthz"]
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:5678/healthz || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
 
-  # API de Restauración
+  # API de Restauración - Producción
   doc-restoration-api:
-    build: .
+    build: 
+      context: .
+      dockerfile: Dockerfile
     container_name: doc-restoration-api
     ports:
       - "8000:8000"
     environment:
+      # MinIO Configuration
       MINIO_ENDPOINT: minio:9000
       MINIO_ACCESS_KEY: minio
       MINIO_SECRET_KEY: minio123
       MINIO_SECURE: "false"
+      
+      # API Configuration
       API_HOST: 0.0.0.0
       API_PORT: 8000
-      # Variables para hot reload
+      ENVIRONMENT: production
+      
+      # Application Settings
       PYTHONPATH: /app
-      WATCHFILES_FORCE_POLLING: "true"
+      
+      # Processing Limits
+      MAX_FILE_SIZE: 50MB
+      MAX_BATCH_SIZE: 100
+      CONCURRENT_JOBS: 3
     depends_on:
-      - minio
-      - postgres
+      minio:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
     volumes:
       - ./outputs:/app/outputs
       - ./models:/app/models
-      - ./src:/app/src
-      - ./api:/app/api          # ✅ Hot reload para la API
-      - ./config:/app/config    # ✅ Hot reload para configuraciones
-    command: ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-dir", "/app/api", "--reload-dir", "/app/src"]
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+      - api_logs:/app/logs
+    networks:
+      - doc-restoration-network
+    restart: unless-stopped
+
+  # API de Restauración - Desarrollo (con hot reload)
+  doc-restoration-api-dev:
+    build: 
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: doc-restoration-api-dev
+    ports:
+      - "8001:8000"  # Puerto diferente para desarrollo
+    environment:
+      # MinIO Configuration
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: minio
+      MINIO_SECRET_KEY: minio123
+      MINIO_SECURE: "false"
+      
+      # API Configuration
+      API_HOST: 0.0.0.0
+      API_PORT: 8000
+      ENVIRONMENT: development
+      DEBUG: "true"
+      
+      # Application Settings
+      PYTHONPATH: /app
+      WATCHFILES_FORCE_POLLING: "true"
+      
+      # Processing Limits
+      MAX_FILE_SIZE: 50MB
+      MAX_BATCH_SIZE: 10
+      CONCURRENT_JOBS: 1
+    depends_on:
+      minio:
+        condition: service_healthy
+    volumes:
+      - ./outputs:/app/outputs
+      - ./models:/app/models
+      - ./src:/app/src           # Hot reload para src
+      - ./api:/app/api           # Hot reload para API
+      - ./config:/app/config     # Hot reload para config
+      - ./scripts:/app/scripts   # Hot reload para scripts
+      - api_logs:/app/logs
+    networks:
+      - doc-restoration-network
+    profiles:
+      - development
+
+  # Servicio de entrenamiento (separado)
+  training-service:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    container_name: training-service
+    environment:
+      # MinIO Configuration
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: minio
+      MINIO_SECRET_KEY: minio123
+      MINIO_SECURE: "false"
+      
+      # Training Configuration
+      TRAINING_EPOCHS: 50
+      BATCH_SIZE: 8
+      LEARNING_RATE: 1e-4
+      DEVICE: cpu  # Cambiar a 'cuda' si tienes GPU
+      
+      # Application Settings
+      PYTHONPATH: /app
+    depends_on:
+      minio:
+        condition: service_healthy
+    volumes:
+      - ./outputs:/app/outputs
+      - ./models:/app/models
+      - ./data:/app/data
+      - training_logs:/app/logs
+    networks:
+      - doc-restoration-network
+    profiles:
+      - training
+    command: ["python", "-m", "layers.train-layers.train_layer_2"]
 
 volumes:
   minio_data:
+    name: doc_restoration_minio_data
   postgres_data:
+    name: doc_restoration_postgres_data
   n8n_data:
+    name: doc_restoration_n8n_data
+  api_logs:
+    name: doc_restoration_api_logs
+  training_logs:
+    name: doc_restoration_training_logs
+
+networks:
+  doc-restoration-network:
+    name: doc-restoration-network
+    driver: bridge

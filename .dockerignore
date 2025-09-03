@@ -10,7 +10,6 @@ venv_3.11/
 .venv/
 .git/
 .gitignore
-README.md
 *.md
 .pytest_cache/
 .coverage
@@ -28,10 +27,40 @@ npm-debug.log*
 temp/
 tmp/
 
-# Outputs que se regeneran
-outputs/analysis/
-outputs/samples/
-outputs/evaluation/
+# Outputs que se regeneran (mantener estructura pero vacío)
+outputs/analysis/*
+outputs/samples/*
+outputs/evaluation/*
+!outputs/.gitkeep
+
+# Poetry específico
+poetry.lock
+.venv/
+
+# Docker
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# Scripts de desarrollo
+scripts/
+docker-manager.*
+
+# Documentación
+README.md
+POETRY_GUIDE.md
+*.md
+
+# Configuración local
+.env
+.env.local
 
 # Legacy files no necesarios en container
 legacy/
+requirements.txt
+api/requirements.txt
+
+# Tests (para imagen de producción)
+tests/
+test_*.py
+*_test.py
