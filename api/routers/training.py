@@ -67,14 +67,23 @@ async def start_layer2_training(
     num_epochs: int = 10,
     max_pairs: int = 100,
     batch_size: int = 2,
-    use_training_bucket: bool = True
+    use_training_bucket: bool = True,
+    use_finetuning: bool = True,
+    freeze_backbone: bool = False,
+    finetuning_lr_factor: float = 0.1
 ):
     """
-    Iniciar entrenamiento de Capa 2 (NAFNet + DocUNet)
+    Iniciar entrenamiento de Capa 2 (NAFNet + DocUNet) con fine-tuning
     
     Args:
+        num_epochs: Número de épocas de entrenamiento
+        max_pairs: Máximo número de pares de entrenamiento a usar
+        batch_size: Tamaño del batch
         use_training_bucket: Si usar bucket 'document-training' con pares sintéticos (recomendado)
                            False: usar buckets separados 'document-degraded' y 'document-clean'
+        use_finetuning: Si usar fine-tuning con modelo preentrenado NAFNet-SIDD-width64
+        freeze_backbone: Si congelar las capas del backbone preentrenado
+        finetuning_lr_factor: Factor de reducción del learning rate para capas preentrenadas (0.1 = 10% del LR base)
     """
     try:
         if not TRAINING_SERVICE_AVAILABLE:
@@ -91,13 +100,17 @@ async def start_layer2_training(
             num_epochs=num_epochs,
             max_pairs=max_pairs,
             batch_size=batch_size,
-            use_training_bucket=use_training_bucket
+            use_training_bucket=use_training_bucket,
+            use_finetuning=use_finetuning,
+            freeze_backbone=freeze_backbone,
+            finetuning_lr_factor=finetuning_lr_factor
         )
         
         # Ejecutar en background usando el servicio
         background_tasks.add_task(
             training_service.start_layer2_training, 
-            job_id, num_epochs, max_pairs, batch_size, use_training_bucket
+            job_id, num_epochs, max_pairs, batch_size, use_training_bucket,
+            use_finetuning, freeze_backbone, finetuning_lr_factor
         )
         
         return JSONResponse({
@@ -110,7 +123,11 @@ async def start_layer2_training(
                 "max_pairs": max_pairs,
                 "batch_size": batch_size,
                 "use_training_bucket": use_training_bucket,
-                "data_source": "document-training bucket" if use_training_bucket else "separate buckets"
+                "use_finetuning": use_finetuning,
+                "freeze_backbone": freeze_backbone,
+                "finetuning_lr_factor": finetuning_lr_factor,
+                "data_source": "document-training bucket" if use_training_bucket else "separate buckets",
+                "pretrained_model": "NAFNet-SIDD-width64" if use_finetuning else "None"
             },
             "check_status_url": f"/training/status/{job_id}"
         })

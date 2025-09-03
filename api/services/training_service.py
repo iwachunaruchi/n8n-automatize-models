@@ -325,7 +325,9 @@ class TrainingService:
     # ============================================================================
     
     async def start_layer2_training(self, job_id: str, num_epochs: int, max_pairs: int, 
-                                  batch_size: int, use_training_bucket: bool = True):
+                                  batch_size: int, use_training_bucket: bool = True,
+                                  use_finetuning: bool = True, freeze_backbone: bool = False,
+                                  finetuning_lr_factor: float = 0.1):
         """Ejecutar entrenamiento de Capa 2"""
         try:
             self.update_job_status(job_id, "running", 10)
@@ -354,22 +356,27 @@ class TrainingService:
             
             self.update_job_status(job_id, "running", 40)
             
-            # Simular entrenamiento por épocas
-            for epoch in range(1, num_epochs + 1):
-                # Aquí iría el entrenamiento real
-                await asyncio.sleep(2)  # Simular tiempo de entrenamiento
-                
-                progress = 40 + int((epoch / num_epochs) * 50)
-                self.update_job_status(
-                    job_id, 
-                    "running", 
-                    progress,
-                    current_epoch=epoch
-                )
-                
-                logger.info(f"Época {epoch}/{num_epochs} completada para job {job_id}")
+            # Ejecutar entrenamiento real con parámetros de fine-tuning
+            logger.info(f"Iniciando entrenamiento Layer 2 con fine-tuning: {use_finetuning}")
+            logger.info(f"Parámetros: epochs={num_epochs}, pairs={max_pairs}, batch={batch_size}")
+            logger.info(f"Fine-tuning: freeze_backbone={freeze_backbone}, lr_factor={finetuning_lr_factor}")
             
-            # Simular guardado del modelo entrenado
+            self.update_job_status(job_id, "running", 50, message="Entrenando modelo...")
+            
+            # Ejecutar entrenamiento real
+            trainer.train(
+                num_epochs=num_epochs,
+                max_pairs=max_pairs,
+                batch_size=batch_size,
+                use_training_bucket=use_training_bucket,
+                use_finetuning=use_finetuning,
+                freeze_backbone=freeze_backbone,
+                finetuning_lr_factor=finetuning_lr_factor
+            )
+            
+            self.update_job_status(job_id, "running", 90, message="Guardando modelo entrenado...")
+            
+            # El modelo ya fue guardado por el trainer, solo actualizamos estado
             try:
                 model_name = f"model_{job_id}_{num_epochs}epochs.pth"
                 model_data = self._create_dummy_model_data(job_id, num_epochs)

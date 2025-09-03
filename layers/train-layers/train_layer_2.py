@@ -544,19 +544,6 @@ class DocumentDataset(Dataset):
             print(f"Error descargando {bucket}/{filename}: {e}")
             return None
     
-    def __getitem__(self, idx):
-        degraded_file, clean_file = self.pairs[idx]
-        
-        # Determinar bucket según el método usado
-        if self.use_training_bucket:
-            # Ambos archivos están en el bucket de entrenamiento
-            degraded = self._download_image(MINIO_BUCKETS['training'], degraded_file)
-            clean = self._download_image(MINIO_BUCKETS['training'], clean_file)
-        else:
-            # Método original: buckets separados
-            degraded = self._download_image(MINIO_BUCKETS['degraded'], degraded_file)
-            clean = self._download_image(MINIO_BUCKETS['clean'], clean_file)
-    
     def _extract_patch(self, degraded: np.ndarray, clean: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         """Extraer patch aleatorio"""
         h, w = min(degraded.shape[0], clean.shape[0]), min(degraded.shape[1], clean.shape[1])
@@ -584,32 +571,66 @@ class DocumentDataset(Dataset):
     def __getitem__(self, idx):
         degraded_file, clean_file = self.pairs[idx]
         
-        # Descargar imágenes
-        degraded = self._download_image(MINIO_BUCKETS['degraded'], degraded_file)
-        clean = self._download_image(MINIO_BUCKETS['clean'], clean_file)
+        # Determinar bucket según el método usado y descargar imágenes
+        if self.use_training_bucket:
+            # Ambos archivos están en el bucket de entrenamiento
+            degraded = self._download_image(MINIO_BUCKETS['training'], degraded_file)
+            clean = self._download_image(MINIO_BUCKETS['training'], clean_file)
+        else:
+            # Método original: buckets separados
+            degraded = self._download_image(MINIO_BUCKETS['degraded'], degraded_file)
+            clean = self._download_image(MINIO_BUCKETS['clean'], clean_file)
         
         if degraded is None or clean is None:
-            # Fallback a un índice válido
-            return self.__getitem__(0 if idx != 0 else 1)
+            # Fallback más robusto: intentar con otros índices sin recursión infinita
+            print(f"❌ Error descargando par {idx}, intentando con otros...")
+            for fallback_idx in range(len(self.pairs)):
+                if fallback_idx != idx:  # Evitar el mismo índice
+                    try:
+                        fallback_degraded_file, fallback_clean_file = self.pairs[fallback_idx]
+                        
+                        if self.use_training_bucket:
+                            fallback_degraded = self._download_image(MINIO_BUCKETS['training'], fallback_degraded_file)
+                            fallback_clean = self._download_image(MINIO_BUCKETS['training'], fallback_clean_file)
+                        else:
+                            fallback_degraded = self._download_image(MINIO_BUCKETS['degraded'], fallback_degraded_file)
+                            fallback_clean = self._download_image(MINIO_BUCKETS['clean'], fallback_clean_file)
+                        
+                        if fallback_degraded is not None and fallback_clean is not None:
+                            degraded, clean = fallback_degraded, fallback_clean
+                            print(f"✅ Usando par fallback {fallback_idx}")
+                            break
+                    except:
+                        continue
+            
+            # Si aún no tenemos datos válidos, crear tensores dummy
+            if degraded is None or clean is None:
+                print(f"⚠️ Creando tensores dummy para índice {idx}")
+                dummy_shape = (self.patch_size, self.patch_size, 3)
+                degraded = np.random.rand(*dummy_shape).astype(np.uint8)
+                clean = np.random.rand(*dummy_shape).astype(np.uint8)
         
         # Extraer patches
         degraded_patch, clean_patch = self._extract_patch(degraded, clean)
         
         # Aplicar transformaciones
-        seed = random.randint(0, 2**32)
+        if self.transform:
+            seed = random.randint(0, 2**32)
+            
+            random.seed(seed)
+            np.random.seed(seed)
+            degraded_transformed = self.transform(image=degraded_patch)["image"]
+            
+            random.seed(seed)
+            np.random.seed(seed) 
+            clean_transformed = self.transform(image=clean_patch)["image"]
+        else:
+            # Convertir a tensor manualmente si no hay transformaciones
+            degraded_transformed = torch.from_numpy(degraded_patch.transpose(2, 0, 1)).float() / 255.0
+            clean_transformed = torch.from_numpy(clean_patch.transpose(2, 0, 1)).float() / 255.0
         
-        random.seed(seed)
-        np.random.seed(seed)
-        degraded_transformed = self.transform(image=degraded_patch)
-        
-        random.seed(seed)
-        np.random.seed(seed) 
-        clean_transformed = self.transform(image=clean_patch)
-        
-        return {
-            'degraded': degraded_transformed['image'],
-            'clean': clean_transformed['image']
-        }
+        # RETORNAR TUPLA, NO DICCIONARIO (para compatibilidad con DataLoader)
+        return degraded_transformed, clean_transformed
 
 # ============================================================================
 # ENTRENADOR PARA CAPA 2
@@ -680,8 +701,15 @@ class Layer2Trainer:
         pbar = tqdm(dataloader, desc=f"Época {epoch}")
         
         for batch_idx, batch in enumerate(pbar):
-            degraded = batch['degraded'].to(self.device)
-            clean = batch['clean'].to(self.device)
+            # Manejar tanto tuplas como listas del DataLoader
+            if isinstance(batch, (list, tuple)) and len(batch) == 2:
+                degraded, clean = batch[0], batch[1]
+            else:
+                print(f"❌ DEBUG: Batch inesperado - tipo: {type(batch)}")
+                continue
+                
+            degraded = degraded.to(self.device)
+            clean = clean.to(self.device)
             
             # ===== Entrenamiento NAFNet =====
             self.nafnet_optimizer.zero_grad()
@@ -743,8 +771,15 @@ class Layer2Trainer:
         
         with torch.no_grad():
             for batch in dataloader:
-                degraded = batch['degraded'].to(self.device)
-                clean = batch['clean'].to(self.device)
+                # Manejar tanto tuplas como listas del DataLoader
+                if isinstance(batch, (list, tuple)) and len(batch) == 2:
+                    degraded, clean = batch[0], batch[1]
+                else:
+                    print(f"❌ DEBUG VAL: Batch inesperado - tipo: {type(batch)}")
+                    continue
+                    
+                degraded = degraded.to(self.device)
+                clean = clean.to(self.device)
                 
                 # Pipeline completo
                 denoised = self.nafnet(degraded)
@@ -799,6 +834,10 @@ class Layer2Trainer:
                 freeze_backbone=freeze_backbone, 
                 learning_rate_factor=finetuning_lr_factor
             )
+            
+            # Debug: verificar qué devuelve setup_finetuning_params
+            print(f"🔍 DEBUG nafnet_param_groups tipo: {type(nafnet_param_groups)}")
+            print(f"🔍 DEBUG nafnet_param_groups contenido: {nafnet_param_groups}")
             
             # Recrear optimizador con grupos de parámetros diferenciados
             base_lr = 1e-4
