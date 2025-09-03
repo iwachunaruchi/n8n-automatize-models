@@ -36,7 +36,8 @@ class TrainingService:
             'degraded': 'document-degraded',
             'clean': 'document-clean',
             'restored': 'document-restored',
-            'training': 'document-training'
+            'training': 'document-training',
+            'models': 'models'
         }
     
     # ============================================================================
@@ -366,6 +367,25 @@ class TrainingService:
                 
                 logger.info(f"Época {epoch}/{num_epochs} completada para job {job_id}")
             
+            # Simular guardado del modelo entrenado
+            try:
+                model_name = f"model_{job_id}_{num_epochs}epochs.pth"
+                model_data = self._create_dummy_model_data(job_id, num_epochs)
+                
+                # Guardar modelo en MinIO bucket models/layer_2/
+                model_path = minio_service.upload_model(model_data, "2", model_name)
+                logger.info(f"Modelo guardado en MinIO: {model_path}")
+                
+                saved_model_info = {
+                    "model_path": model_path,
+                    "model_name": model_name,
+                    "layer": "2",
+                    "size_bytes": len(model_data)
+                }
+            except Exception as e:
+                logger.warning(f"Error guardando modelo: {e}")
+                saved_model_info = {"error": str(e)}
+            
             # Completar entrenamiento
             self.update_job_status(
                 job_id, 
@@ -378,6 +398,7 @@ class TrainingService:
                     "pairs_used": min(max_pairs, data_status["statistics"]["valid_pairs"]),
                     "batch_size": batch_size,
                     "use_training_bucket": use_training_bucket,
+                    "model_saved": saved_model_info,
                     "final_metrics": {
                         "loss": 0.05,  # Simulado
                         "accuracy": 0.95  # Simulado
@@ -396,6 +417,28 @@ class TrainingService:
                 error=str(e),
                 end_time=datetime.now().isoformat()
             )
+    
+    def _create_dummy_model_data(self, job_id: str, epochs: int) -> bytes:
+        """Crear datos de modelo dummy para simulación"""
+        import json
+        
+        # Simular un archivo de modelo con metadatos
+        model_info = {
+            "job_id": job_id,
+            "epochs": epochs,
+            "timestamp": datetime.now().isoformat(),
+            "architecture": "Layer2_Restormer",
+            "training_type": "layer2_training",
+            "status": "completed"
+        }
+        
+        # Convertir a bytes (en un caso real, aquí sería torch.save)
+        model_data = json.dumps(model_info, indent=2).encode('utf-8')
+        
+        # Agregar padding para simular un modelo más grande
+        padding = b"0" * (1024 * 100)  # 100KB de padding
+        
+        return model_data + padding
 
 # Instancia global del servicio
 training_service = TrainingService()

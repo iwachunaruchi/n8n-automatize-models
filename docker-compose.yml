@@ -38,10 +38,12 @@ services:
       /usr/bin/mc mb myminio/document-clean || true;
       /usr/bin/mc mb myminio/document-restored || true;
       /usr/bin/mc mb myminio/document-training || true;
+      /usr/bin/mc mb myminio/models || true;
       /usr/bin/mc anonymous set public myminio/document-degraded;
       /usr/bin/mc anonymous set public myminio/document-clean;
       /usr/bin/mc anonymous set public myminio/document-restored;
       /usr/bin/mc anonymous set public myminio/document-training;
+      /usr/bin/mc anonymous set public myminio/models;
       echo 'Buckets creados y configurados exitosamente';
       "
 

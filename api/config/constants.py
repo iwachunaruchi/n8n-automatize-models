@@ -19,7 +19,8 @@ BUCKETS = {
     "degraded": "document-degraded",
     "clean": "document-clean", 
     "restored": "document-restored",
-    "training": "document-training"
+    "training": "document-training",
+    "models": "models"
 }
 
 # ===== CONFIGURACIÓN DE ARCHIVOS =====

@@ -57,6 +57,7 @@ try:
     from routers.files import router as files_router
     from routers.jobs import router as jobs_router
     from routers.training import router as training_router
+    from routers.models import router as models_router
     logger.info("✅ Routers importados exitosamente")
     routers_loaded = True
 except ImportError as e:
@@ -123,6 +124,7 @@ if routers_loaded:
     app.include_router(files_router)
     app.include_router(jobs_router)
     app.include_router(training_router)
+    app.include_router(models_router)
 else:
     logging.warning("Routers no pudieron ser cargados - funcionando en modo básico")
 
