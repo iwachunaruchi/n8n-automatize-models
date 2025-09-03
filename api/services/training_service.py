@@ -196,14 +196,24 @@ class TrainingService:
                 # Usar servicio de datos sintéticos directamente
                 result = await synthetic_data_service.generate_training_pairs_async(source_bucket, needed_pairs)
                 
-                return {
-                    "success": True,
-                    "message": f"Generados {needed_pairs} pares adicionales",
-                    "current_pairs": current_pairs,
-                    "target_pairs": target_pairs,
-                    "needed_pairs": needed_pairs,
-                    "generation_result": result
-                }
+                if result["status"] == "success":
+                    return {
+                        "success": True,
+                        "message": f"Generados {result['generated_count']} pares adicionales exitosamente",
+                        "current_pairs": current_pairs,
+                        "target_pairs": target_pairs,
+                        "needed_pairs": needed_pairs,
+                        "generated_count": result["generated_count"],
+                        "total_files_created": result["total_files_created"],
+                        "generation_result": result
+                    }
+                else:
+                    return {
+                        "success": False,
+                        "error": f"Error en generación: {result['message']}",
+                        "current_pairs": current_pairs,
+                        "needed_pairs": needed_pairs
+                    }
                 
             except Exception as e:
                 logger.error(f"Error generando pares: {e}")

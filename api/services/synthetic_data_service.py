@@ -406,42 +406,104 @@ class SyntheticDataService:
     
     # ===== MÉTODOS PARA COMPATIBILIDAD CON CÓDIGO EXISTENTE =====
     
+    def apply_random_degradation(self, image: np.ndarray) -> np.ndarray:
+        """Aplicar degradación aleatoria a una imagen"""
+        import random
+        
+        # Seleccionar degradación aleatoria
+        degradation_types = ["mixed", "blur", "noise", "compression", "distortion", "aging"]
+        selected_degradation = random.choice(degradation_types)
+        
+        return self._apply_degradation(image, selected_degradation)
+    
     async def generate_training_pairs_async(self, source_bucket: str, count: int) -> dict:
-        """Generar pares de entrenamiento de forma asíncrona"""
+        """Generar pares de entrenamiento de forma asíncrona - IMPLEMENTACIÓN REAL"""
         try:
             logger.info(f"Generando {count} pares de entrenamiento desde {source_bucket}")
             
-            # Simular generación asíncrona
-            results = []
+            # Validar bucket de origen
+            if source_bucket not in BUCKETS.values():
+                raise ValueError(f"Bucket de origen inválido: {source_bucket}")
             
-            for i in range(count):
-                # Simular tiempo de procesamiento
-                await asyncio.sleep(0.1)
-                
-                # Simular generación de par
-                pair_uuid = str(uuid.uuid4())
-                results.append({
-                    "clean_file": f"clean_{pair_uuid}.png",
-                    "degraded_file": f"degraded_{pair_uuid}.png",
-                    "uuid": pair_uuid
-                })
-                
-                logger.info(f"Par {i+1}/{count} generado: {pair_uuid}")
+            # Obtener archivos del bucket origen
+            files = minio_service.list_files(source_bucket)
+            if not files:
+                raise ValueError(f"No hay archivos en el bucket {source_bucket}")
+            
+            # Seleccionar archivos aleatoriamente
+            import random
+            selected_files = random.sample(files, min(len(files), count))
+            
+            generated_pairs = []
+            target_bucket = BUCKETS['training']
+            
+            for i, filename in enumerate(selected_files):
+                try:
+                    # Descargar imagen original
+                    image_data = minio_service.download_file(source_bucket, filename)
+                    
+                    # Convertir a imagen
+                    import cv2
+                    import numpy as np
+                    from io import BytesIO
+                    
+                    # Decodificar imagen
+                    nparr = np.frombuffer(image_data, np.uint8)
+                    clean_image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                    
+                    if clean_image is None:
+                        logger.warning(f"No se pudo decodificar {filename}")
+                        continue
+                    
+                    # Generar versión degradada
+                    degraded_image = self.apply_random_degradation(clean_image)
+                    
+                    # Generar UUID único
+                    pair_uuid = str(uuid.uuid4())
+                    
+                    # Guardar imagen limpia
+                    clean_filename = f"clean_{pair_uuid}.png"
+                    clean_encoded = cv2.imencode('.png', clean_image)[1].tobytes()
+                    minio_service.upload_file(clean_encoded, target_bucket, clean_filename)
+                    
+                    # Guardar imagen degradada  
+                    degraded_filename = f"degraded_{pair_uuid}.png"
+                    degraded_encoded = cv2.imencode('.png', degraded_image)[1].tobytes()
+                    minio_service.upload_file(degraded_encoded, target_bucket, degraded_filename)
+                    
+                    generated_pairs.append({
+                        "clean_file": clean_filename,
+                        "degraded_file": degraded_filename,
+                        "uuid": pair_uuid,
+                        "source_file": filename
+                    })
+                    
+                    # Simular pequeña pausa para no sobrecargar
+                    await asyncio.sleep(0.1)
+                    
+                    logger.info(f"Par {i+1}/{len(selected_files)} generado: {pair_uuid}")
+                    
+                except Exception as e:
+                    logger.error(f"Error procesando {filename}: {e}")
+                    continue
+            
+            logger.info(f"Generación completada: {len(generated_pairs)} pares creados")
             
             return {
-                "success": True,
-                "pairs_generated": count,
+                "status": "success",
+                "generated_count": len(generated_pairs),
+                "total_files_created": len(generated_pairs) * 2,
                 "source_bucket": source_bucket,
-                "target_bucket": BUCKETS['training'],
-                "results": results
+                "target_bucket": target_bucket,
+                "pairs": generated_pairs
             }
             
         except Exception as e:
             logger.error(f"Error generando pares de entrenamiento: {e}")
             return {
-                "success": False,
-                "error": str(e),
-                "pairs_generated": 0
+                "status": "error",
+                "message": str(e),
+                "generated_count": 0
             }
     
     def generate_training_pairs(self, clean_bucket: str, count: int = 10) -> dict:

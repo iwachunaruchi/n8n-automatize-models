@@ -206,13 +206,23 @@ async def prepare_layer2_data(
         result = await training_service.prepare_layer2_data(target_pairs, source_bucket)
         
         if result["success"]:
-            return JSONResponse({
+            response_data = {
                 "status": "success",
                 "message": result["message"],
                 "current_pairs": result.get("current_pairs", 0),
                 "target_pairs": target_pairs,
                 "action": result.get("action", "completed")
-            })
+            }
+            
+            # Agregar información adicional si se generaron pares
+            if "generated_count" in result:
+                response_data["generated_count"] = result["generated_count"]
+            if "total_files_created" in result:
+                response_data["total_files_created"] = result["total_files_created"]
+            if "needed_pairs" in result:
+                response_data["needed_pairs"] = result["needed_pairs"]
+            
+            return JSONResponse(response_data)
         else:
             raise HTTPException(status_code=500, detail=result["error"])
         
