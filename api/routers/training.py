@@ -393,3 +393,125 @@ async def get_training_info():
         "service_architecture": "✅ Refactorizado - Uso directo de servicios (no HTTP requests)",
         "training_service_available": TRAINING_SERVICE_AVAILABLE
     })
+
+# ============================================================================
+# ENDPOINTS DE REPORTES DE ENTRENAMIENTO
+# ============================================================================
+
+@router.get("/reports")
+async def list_training_reports(layer: Optional[str] = None):
+    """
+    Listar reportes de entrenamiento disponibles
+    
+    Args:
+        layer: Filtrar por capa específica (opcional)
+    
+    Returns:
+        Lista de reportes de entrenamiento generados
+    """
+    if not TRAINING_SERVICE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Servicio de entrenamiento no disponible")
+    
+    try:
+        # Importar servicio de reportes
+        from services.training_report_service import training_report_service
+        
+        reports = training_report_service.list_training_reports(layer)
+        
+        return {
+            "status": "success", 
+            "filter_layer": layer,
+            "total_reports": len(reports),
+            "reports": reports
+        }
+        
+    except Exception as e:
+        logger.error(f"Error listando reportes: {e}")
+        raise HTTPException(status_code=500, detail=f"Error listando reportes: {str(e)}")
+
+@router.get("/reports/{report_filename}")
+async def download_training_report(report_filename: str):
+    """
+    Descargar reporte de entrenamiento específico
+    
+    Args:
+        report_filename: Nombre del archivo de reporte
+    
+    Returns:
+        Contenido del reporte en formato texto
+    """
+    if not TRAINING_SERVICE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Servicio de entrenamiento no disponible")
+    
+    try:
+        from services.training_report_service import training_report_service
+        
+        report_path = f"reports/{report_filename}"
+        report_content = training_report_service.download_report(report_path)
+        
+        if not report_content:
+            raise HTTPException(status_code=404, detail="Reporte no encontrado")
+        
+        from fastapi.responses import PlainTextResponse
+        return PlainTextResponse(
+            content=report_content,
+            media_type="text/plain",
+            headers={"Content-Disposition": f"attachment; filename={report_filename}"}
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error descargando reporte {report_filename}: {e}")
+        raise HTTPException(status_code=500, detail=f"Error descargando reporte: {str(e)}")
+
+@router.get("/reports/job/{job_id}")
+async def get_job_training_report(job_id: str):
+    """
+    Obtener reporte de entrenamiento asociado a un job específico
+    
+    Args:
+        job_id: ID del trabajo de entrenamiento
+    
+    Returns:
+        Información del reporte asociado al job
+    """
+    if not TRAINING_SERVICE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Servicio de entrenamiento no disponible")
+    
+    try:
+        # Obtener información del job
+        job_status = training_service.get_job_status(job_id)
+        
+        if not job_status:
+            raise HTTPException(status_code=404, detail="Job no encontrado")
+        
+        # Verificar si tiene reporte asociado
+        results = job_status.get("results", {})
+        report_path = results.get("training_report")
+        
+        if not report_path:
+            return {
+                "status": "no_report",
+                "message": "No hay reporte asociado a este job",
+                "job_id": job_id,
+                "job_status": job_status.get("status")
+            }
+        
+        # Obtener información del reporte
+        from services.training_report_service import training_report_service
+        
+        return {
+            "status": "success",
+            "job_id": job_id,
+            "report_path": report_path,
+            "report_filename": report_path.split("/")[-1],
+            "download_url": f"/training/reports/{report_path.split('/')[-1]}",
+            "job_completed": job_status.get("status") == "completed"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error obteniendo reporte del job {job_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Error obteniendo reporte: {str(e)}")

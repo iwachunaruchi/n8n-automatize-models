@@ -177,3 +177,59 @@ async def get_models_stats():
     except Exception as e:
         logger.error(f"Error obteniendo estadísticas de modelos: {e}")
         raise HTTPException(status_code=500, detail=f"Error obteniendo estadísticas: {str(e)}")
+
+@router.get("/reports")
+async def list_model_reports():
+    """
+    Listar reportes de entrenamiento de modelos
+    
+    Returns:
+        Lista de reportes de entrenamiento disponibles
+    """
+    try:
+        from services.training_report_service import training_report_service
+        
+        reports = training_report_service.list_training_reports()
+        
+        return {
+            "status": "success",
+            "total_reports": len(reports),
+            "reports": reports
+        }
+        
+    except Exception as e:
+        logger.error(f"Error listando reportes de modelos: {e}")
+        raise HTTPException(status_code=500, detail=f"Error listando reportes: {str(e)}")
+
+@router.get("/reports/{report_filename}")
+async def download_model_report(report_filename: str):
+    """
+    Descargar reporte específico de entrenamiento
+    
+    Args:
+        report_filename: Nombre del archivo de reporte
+    
+    Returns:
+        Archivo de reporte para descarga
+    """
+    try:
+        from services.training_report_service import training_report_service
+        from fastapi.responses import PlainTextResponse
+        
+        report_path = f"reports/{report_filename}"
+        report_content = training_report_service.download_report(report_path)
+        
+        if not report_content:
+            raise HTTPException(status_code=404, detail="Reporte no encontrado")
+        
+        return PlainTextResponse(
+            content=report_content,
+            media_type="text/plain",
+            headers={"Content-Disposition": f"attachment; filename={report_filename}"}
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error descargando reporte {report_filename}: {e}")
+        raise HTTPException(status_code=500, detail=f"Error descargando reporte: {str(e)}")
