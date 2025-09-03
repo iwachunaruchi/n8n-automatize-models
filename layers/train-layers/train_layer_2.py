@@ -36,6 +36,20 @@ except ImportError as e:
     print(f"Servicios no disponibles: {e}")
     SERVICES_AVAILABLE = False
 
+# ============================================================================
+# CONFIGURACIÓN DE MODELOS PREENTRENADOS
+# ============================================================================
+
+PRETRAINED_MODELS = {
+    'nafnet_sidd_width64': {
+        'minio_path': 'pretrained_models/layer_2/nafnet/NAFNet-SIDD-width64.pth',
+        'bucket': 'models',
+        'description': 'NAFNet preentrenado en SIDD dataset',
+        'width': 64,
+        'compatible_arch': 'NAFNet'
+    }
+}
+
 # Configuración de buckets
 MINIO_BUCKETS = {
     'degraded': 'document-degraded',
@@ -146,6 +160,218 @@ class SimpleNAFNet(nn.Module):
         # Output
         x = self.ending(x)
         return x
+
+# ============================================================================
+# FUNCIONES PARA MANEJO DE MODELOS PREENTRENADOS
+# ============================================================================
+
+def download_pretrained_model(model_key: str, cache_dir: str = "./temp_models") -> Optional[str]:
+    """
+    Descargar modelo preentrenado desde MinIO y guardarlo localmente
+    
+    Args:
+        model_key: Clave del modelo en PRETRAINED_MODELS
+        cache_dir: Directorio para guardar el modelo temporalmente
+        
+    Returns:
+        Ruta local del modelo descargado o None si hay error
+    """
+    if not SERVICES_AVAILABLE:
+        logger.warning("Servicios MinIO no disponibles")
+        return None
+        
+    if model_key not in PRETRAINED_MODELS:
+        logger.error(f"Modelo preentrenado no encontrado: {model_key}")
+        return None
+    
+    model_info = PRETRAINED_MODELS[model_key]
+    
+    try:
+        # Crear directorio de cache
+        os.makedirs(cache_dir, exist_ok=True)
+        
+        # Ruta local
+        local_path = os.path.join(cache_dir, f"{model_key}.pth")
+        
+        # Verificar si ya existe localmente
+        if os.path.exists(local_path):
+            logger.info(f"Modelo ya existe localmente: {local_path}")
+            return local_path
+        
+        # Descargar desde MinIO
+        logger.info(f"Descargando modelo preentrenado: {model_key}")
+        model_data = minio_service.download_file(
+            bucket=model_info['bucket'],
+            filename=model_info['minio_path']
+        )
+        
+        # Guardar localmente
+        with open(local_path, 'wb') as f:
+            f.write(model_data)
+        
+        logger.info(f"Modelo descargado exitosamente: {local_path}")
+        return local_path
+        
+    except Exception as e:
+        logger.error(f"Error descargando modelo preentrenado {model_key}: {e}")
+        return None
+
+def load_pretrained_nafnet(model_path: str, target_model: SimpleNAFNet, strict: bool = False) -> bool:
+    """
+    Cargar pesos preentrenados en un modelo NAFNet
+    
+    Args:
+        model_path: Ruta al archivo de modelo preentrenado
+        target_model: Modelo NAFNet donde cargar los pesos
+        strict: Si True, requiere coincidencia exacta de capas
+        
+    Returns:
+        True si se cargó exitosamente, False si hay error
+    """
+    try:
+        logger.info(f"Cargando modelo preentrenado desde: {model_path}")
+        
+        # Cargar checkpoint
+        checkpoint = torch.load(model_path, map_location='cpu')
+        
+        # Extraer state_dict (diferentes formatos posibles)
+        if isinstance(checkpoint, dict):
+            if 'params' in checkpoint:
+                state_dict = checkpoint['params']
+            elif 'state_dict' in checkpoint:
+                state_dict = checkpoint['state_dict']
+            elif 'model' in checkpoint:
+                state_dict = checkpoint['model']
+            else:
+                state_dict = checkpoint
+        else:
+            state_dict = checkpoint
+        
+        # Obtener estado actual del modelo
+        model_dict = target_model.state_dict()
+        compatible_dict = {}
+        
+        # Mapeo de nombres de capas (de NAFNet original a SimpleNAFNet)
+        layer_mapping = {
+            'encoders.': 'encoder.',
+            'decoders.': 'decoder.',
+            'ups.': 'ups.',
+            'downs.': 'downs.',
+            'middle.': 'middle.'
+        }
+        
+        for name, param in state_dict.items():
+            mapped_name = name
+            
+            # Aplicar mapeo de nombres
+            for original, target in layer_mapping.items():
+                if original in mapped_name:
+                    mapped_name = mapped_name.replace(original, target)
+            
+            # Verificar compatibilidad
+            if mapped_name in model_dict:
+                if param.shape == model_dict[mapped_name].shape:
+                    compatible_dict[mapped_name] = param
+                    logger.debug(f"Capa compatible: {name} -> {mapped_name} {param.shape}")
+                else:
+                    logger.debug(f"Forma incompatible: {name} -> {mapped_name} {param.shape} vs {model_dict[mapped_name].shape}")
+            else:
+                # Intentar cargar capas básicas (intro, ending) directamente
+                if name in model_dict and param.shape == model_dict[name].shape:
+                    compatible_dict[name] = param
+                    logger.debug(f"Capa directa compatible: {name} {param.shape}")
+                else:
+                    logger.debug(f"Capa no encontrada: {name}")
+        
+        if not compatible_dict:
+            logger.warning("No se encontraron capas compatibles")
+            return False
+        
+        # Cargar capas compatibles
+        model_dict.update(compatible_dict)
+        target_model.load_state_dict(model_dict, strict=strict)
+        
+        logger.info(f"Modelo preentrenado cargado: {len(compatible_dict)}/{len(state_dict)} capas transferidas")
+        logger.info(f"Capas del modelo objetivo: {len(model_dict)}")
+        
+        # Listar capas transferidas exitosamente
+        transferred_layers = list(compatible_dict.keys())
+        if transferred_layers:
+            logger.info(f"Capas transferidas: {transferred_layers[:5]}..." if len(transferred_layers) > 5 else f"Capas transferidas: {transferred_layers}")
+        
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error cargando modelo preentrenado: {e}")
+        return False
+
+def setup_pretrained_nafnet(width: int = 64, use_pretrained: bool = True) -> SimpleNAFNet:
+    """
+    Crear y configurar un modelo NAFNet con pesos preentrenados
+    
+    Args:
+        width: Ancho del modelo (debe coincidir con el preentrenado)
+        use_pretrained: Si cargar pesos preentrenados
+        
+    Returns:
+        Modelo NAFNet configurado
+    """
+    # Crear modelo
+    model = SimpleNAFNet(width=width)
+    
+    if use_pretrained and SERVICES_AVAILABLE:
+        # Intentar cargar modelo preentrenado
+        pretrained_path = download_pretrained_model('nafnet_sidd_width64')
+        
+        if pretrained_path:
+            success = load_pretrained_nafnet(pretrained_path, model, strict=False)
+            if success:
+                logger.info("Modelo NAFNet inicializado con pesos preentrenados")
+            else:
+                logger.warning("Falló la carga de pesos preentrenados, usando inicialización aleatoria")
+        else:
+            logger.warning("No se pudo descargar modelo preentrenado, usando inicialización aleatoria")
+    else:
+        logger.info("Usando inicialización aleatoria para NAFNet")
+    
+    return model
+
+def setup_finetuning_params(model: nn.Module, freeze_backbone: bool = False, learning_rate_factor: float = 0.1) -> Dict:
+    """
+    Configurar parámetros para fine-tuning
+    
+    Args:
+        model: Modelo a configurar
+        freeze_backbone: Si congelar las capas iniciales
+        learning_rate_factor: Factor para reducir learning rate en capas preentrenadas
+        
+    Returns:
+        Diccionario con grupos de parámetros para optimizador
+    """
+    if freeze_backbone:
+        # Congelar primeras capas
+        for name, param in model.named_parameters():
+            if 'intro' in name or 'encoder.0' in name:
+                param.requires_grad = False
+                logger.info(f"Capa congelada: {name}")
+    
+    # Crear grupos de parámetros con diferentes learning rates
+    backbone_params = []
+    head_params = []
+    
+    for name, param in model.named_parameters():
+        if param.requires_grad:
+            if 'intro' in name or 'encoder' in name or 'middle' in name:
+                backbone_params.append(param)
+            else:
+                head_params.append(param)
+    
+    param_groups = [
+        {'params': backbone_params, 'lr_factor': learning_rate_factor},
+        {'params': head_params, 'lr_factor': 1.0}
+    ]
+    
+    return param_groups
 
 class SimpleDocUNet(nn.Module):
     """DocUNet simplificado para dewarping"""
@@ -398,8 +624,9 @@ class Layer2Trainer:
             
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         
-        # Modelos
-        self.nafnet = SimpleNAFNet(in_channels=3, width=32, num_blocks=2).to(self.device)
+        # Modelos - NAFNet con posible carga de modelo preentrenado
+        logger.info("Inicializando modelo NAFNet...")
+        self.nafnet = setup_pretrained_nafnet(width=64, use_pretrained=True).to(self.device)
         self.docunet = SimpleDocUNet(in_channels=3).to(self.device)
         
         # Optimizadores
@@ -530,7 +757,8 @@ class Layer2Trainer:
         return {'val_loss': total_loss / len(dataloader)}
     
     def train(self, num_epochs: int = 10, max_pairs: int = 100, batch_size: int = 4, 
-              use_training_bucket: bool = True):
+              use_training_bucket: bool = True, use_finetuning: bool = True, 
+              freeze_backbone: bool = False, finetuning_lr_factor: float = 0.1):
         """Entrenamiento completo"""
         print("🔧 ENTRENAMIENTO CAPA 2: NAFNet + DocUNet")
         print("=" * 60)
@@ -558,6 +786,31 @@ class Layer2Trainer:
         
         print(f"📊 Imágenes de entrenamiento: {len(train_dataset)}")
         print(f"📊 Imágenes de validación: {len(val_dataset)}")
+        
+        # Configurar fine-tuning si está habilitado
+        if use_finetuning:
+            print(f"\n🎯 Configurando fine-tuning...")
+            print(f"   - Congelar backbone: {freeze_backbone}")
+            print(f"   - Factor LR backbone: {finetuning_lr_factor}")
+            
+            # Configurar parámetros del NAFNet para fine-tuning
+            nafnet_param_groups = setup_finetuning_params(
+                self.nafnet, 
+                freeze_backbone=freeze_backbone, 
+                learning_rate_factor=finetuning_lr_factor
+            )
+            
+            # Recrear optimizador con grupos de parámetros diferenciados
+            base_lr = 1e-4
+            self.nafnet_optimizer = optim.Adam([
+                {'params': nafnet_param_groups[0]['params'], 'lr': base_lr * nafnet_param_groups[0]['lr_factor']},
+                {'params': nafnet_param_groups[1]['params'], 'lr': base_lr * nafnet_param_groups[1]['lr_factor']}
+            ])
+            
+            print(f"   - LR backbone: {base_lr * finetuning_lr_factor}")
+            print(f"   - LR head: {base_lr}")
+        else:
+            print(f"\n🔧 Usando entrenamiento estándar (sin fine-tuning)")
         
         # Entrenamiento
         output_dir = Path("outputs/layer2_training")
