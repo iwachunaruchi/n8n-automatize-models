@@ -376,10 +376,32 @@ class TrainingService:
             
             self.update_job_status(job_id, "running", 90, message="Guardando modelo entrenado...")
             
-            # El modelo ya fue guardado por el trainer, solo actualizamos estado
+            # El modelo real fue guardado por el trainer, vamos a subirlo
             try:
                 model_name = f"model_{job_id}_{num_epochs}epochs.pth"
-                model_data = self._create_dummy_model_data(job_id, num_epochs)
+                
+                # Buscar el modelo real entrenado
+                model_path_candidates = [
+                    "/app/outputs/layer2_training/final_models.pth",
+                    f"/app/outputs/layer2_training/model_{job_id}.pth",
+                    "/app/outputs/layer2_training/checkpoint_epoch_2.pth"
+                ]
+                
+                model_file_path = None
+                for candidate in model_path_candidates:
+                    if os.path.exists(candidate):
+                        model_file_path = candidate
+                        break
+                
+                if model_file_path and os.path.exists(model_file_path):
+                    # Leer el modelo real
+                    with open(model_file_path, 'rb') as f:
+                        model_data = f.read()
+                    logger.info(f"Modelo real cargado desde {model_file_path}, tamaño: {len(model_data)} bytes")
+                else:
+                    # Fallback a modelo dummy si no se encuentra el real
+                    logger.warning("No se encontró modelo real, usando dummy")
+                    model_data = self._create_dummy_model_data(job_id, num_epochs)
                 
                 # Guardar modelo en MinIO bucket models/layer_2/
                 model_path = minio_service.upload_model(model_data, "2", model_name)
@@ -389,7 +411,8 @@ class TrainingService:
                     "model_path": model_path,
                     "model_name": model_name,
                     "layer": "2",
-                    "size_bytes": len(model_data)
+                    "size_bytes": len(model_data),
+                    "source_file": model_file_path if model_file_path else "dummy"
                 }
             except Exception as e:
                 logger.warning(f"Error guardando modelo: {e}")
@@ -427,7 +450,13 @@ class TrainingService:
                     "batch_size": batch_size,
                     "max_pairs": max_pairs,
                     "learning_rate": 0.0001,  # Valor típico
-                    "architecture": "Restormer_Layer2"
+                    "architecture": "Restormer_Layer2",
+                    "use_training_bucket": use_training_bucket,
+                    # Parámetros de fine-tuning
+                    "use_finetuning": use_finetuning,
+                    "freeze_backbone": freeze_backbone,
+                    "finetuning_lr_factor": finetuning_lr_factor,
+                    "base_model": "NAFNet-SIDD-width64"
                 }
                 
                 # Añadir duración calculada

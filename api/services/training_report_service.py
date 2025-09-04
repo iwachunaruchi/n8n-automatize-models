@@ -115,8 +115,22 @@ class TrainingReportService:
             f"Batch size: {training_info.get('batch_size', 'N/A')}",
             f"Máximo de pares: {training_info.get('max_pairs', 'N/A')}",
             f"Learning rate: {training_info.get('learning_rate', 'N/A')}",
+            f"Usar bucket de entrenamiento: {training_info.get('use_training_bucket', 'N/A')}",
             "",
         ])
+        
+        # Parámetros de Fine-tuning (si están disponibles)
+        finetuning_info = training_info.get('finetuning', {})
+        if finetuning_info or training_info.get('use_finetuning') is not None:
+            report_lines.extend([
+                "🎯 PARÁMETROS DE FINE-TUNING",
+                "-" * 40,
+                f"Fine-tuning habilitado: {'Sí' if training_info.get('use_finetuning', False) else 'No'}",
+                f"Freeze backbone: {'Sí' if training_info.get('freeze_backbone', False) else 'No'}",
+                f"Factor de learning rate: {training_info.get('finetuning_lr_factor', 'N/A')}",
+                f"Modelo base: {training_info.get('base_model', 'NAFNet-SIDD-width64')}",
+                "",
+            ])
         
         # Datos utilizados
         results = job_data.get('results', {})

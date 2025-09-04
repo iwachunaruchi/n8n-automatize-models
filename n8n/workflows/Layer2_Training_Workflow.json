@@ -20,7 +20,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Validar y configurar parámetros de entrenamiento\nconst inputData = $input.first().json;\n\n// Parámetros por defecto\nconst defaultParams = {\n  num_epochs: 10,\n  max_pairs: 100,\n  batch_size: 2,\n  use_training_bucket: true\n};\n\n// Combinar con parámetros recibidos\nconst trainingParams = {\n  num_epochs: inputData.num_epochs || defaultParams.num_epochs,\n  max_pairs: inputData.max_pairs || defaultParams.max_pairs,\n  batch_size: inputData.batch_size || defaultParams.batch_size,\n  use_training_bucket: inputData.use_training_bucket !== undefined ? inputData.use_training_bucket : defaultParams.use_training_bucket\n};\n\n// Validaciones\nif (trainingParams.num_epochs < 1 || trainingParams.num_epochs > 100) {\n  throw new Error('num_epochs debe estar entre 1 y 100');\n}\n\nif (trainingParams.max_pairs < 10 || trainingParams.max_pairs > 1000) {\n  throw new Error('max_pairs debe estar entre 10 y 1000');\n}\n\nif (trainingParams.batch_size < 1 || trainingParams.batch_size > 8) {\n  throw new Error('batch_size debe estar entre 1 y 8');\n}\n\nreturn {\n  trainingParams,\n  timestamp: new Date().toISOString(),\n  workflow_id: 'layer2-training-' + Date.now()\n};"
+        "jsCode": "// Validar y configurar parámetros de entrenamiento\nconst inputData = $input.first().json;\n\n// Parámetros por defecto (incluye nuevos parámetros de fine-tuning)\nconst defaultParams = {\n  num_epochs: 10,\n  max_pairs: 100,\n  batch_size: 2,\n  use_training_bucket: true,\n  use_finetuning: true,\n  freeze_backbone: false,\n  finetuning_lr_factor: 0.1\n};\n\n// Combinar con parámetros recibidos\nconst trainingParams = {\n  num_epochs: inputData.num_epochs || defaultParams.num_epochs,\n  max_pairs: inputData.max_pairs || defaultParams.max_pairs,\n  batch_size: inputData.batch_size || defaultParams.batch_size,\n  use_training_bucket: inputData.use_training_bucket !== undefined ? inputData.use_training_bucket : defaultParams.use_training_bucket,\n  use_finetuning: inputData.use_finetuning !== undefined ? inputData.use_finetuning : defaultParams.use_finetuning,\n  freeze_backbone: inputData.freeze_backbone !== undefined ? inputData.freeze_backbone : defaultParams.freeze_backbone,\n  finetuning_lr_factor: inputData.finetuning_lr_factor || defaultParams.finetuning_lr_factor\n};\n\n// Validaciones básicas\nif (trainingParams.num_epochs < 1 || trainingParams.num_epochs > 100) {\n  throw new Error('num_epochs debe estar entre 1 y 100');\n}\n\nif (trainingParams.max_pairs < 10 || trainingParams.max_pairs > 1000) {\n  throw new Error('max_pairs debe estar entre 10 y 1000');\n}\n\nif (trainingParams.batch_size < 1 || trainingParams.batch_size > 8) {\n  throw new Error('batch_size debe estar entre 1 y 8');\n}\n\n// Validaciones de fine-tuning\nif (trainingParams.finetuning_lr_factor <= 0 || trainingParams.finetuning_lr_factor > 1) {\n  throw new Error('finetuning_lr_factor debe estar entre 0.001 y 1.0');\n}\n\n// Información de configuración\nconst configInfo = {\n  training_mode: trainingParams.use_finetuning ? 'Fine-tuning con NAFNet-SIDD-width64' : 'Entrenamiento desde cero',\n  backbone_mode: trainingParams.freeze_backbone ? 'Backbone congelado' : 'Backbone entrenable',\n  learning_rate_info: trainingParams.use_finetuning ? `LR reducido al ${(trainingParams.finetuning_lr_factor * 100)}% para capas preentrenadas` : 'LR estándar'\n};\n\nreturn {\n  trainingParams,\n  configInfo,\n  timestamp: new Date().toISOString(),\n  workflow_id: 'layer2-training-' + Date.now()\n};"
       },
       "id": "validate-params",
       "name": "Validate Training Parameters",
@@ -144,6 +144,18 @@
             {
               "name": "use_training_bucket",
               "value": "={{ $('Validate Training Parameters').item.json.trainingParams.use_training_bucket }}"
+            },
+            {
+              "name": "use_finetuning",
+              "value": "={{ $('Validate Training Parameters').item.json.trainingParams.use_finetuning }}"
+            },
+            {
+              "name": "freeze_backbone",
+              "value": "={{ $('Validate Training Parameters').item.json.trainingParams.freeze_backbone }}"
+            },
+            {
+              "name": "finetuning_lr_factor",
+              "value": "={{ $('Validate Training Parameters').item.json.trainingParams.finetuning_lr_factor }}"
             }
           ]
         },
@@ -292,7 +304,7 @@
     {
       "parameters": {
         "respondWith": "json",
-        "responseBody": "{\n  \"status\": \"success\",\n  \"message\": \"Entrenamiento de Capa 2 completado exitosamente\",\n  \"job_id\": \"={{ $('Extract Job ID').item.json.job_id }}\",\n  \"training_results\": {{ $json }},\n  \"workflow_id\": \"={{ $('Validate Training Parameters').item.json.workflow_id }}\",\n  \"completed_at\": \"={{ new Date().toISOString() }}\"\n}",
+        "responseBody": "{\n  \"status\": \"success\",\n  \"message\": \"Entrenamiento de Capa 2 completado exitosamente\",\n  \"job_id\": \"={{ $('Extract Job ID').item.json.job_id }}\",\n  \"training_results\": {{ $json }},\n  \"training_config\": {\n    \"use_finetuning\": \"={{ $('Validate Training Parameters').item.json.trainingParams.use_finetuning }}\",\n    \"freeze_backbone\": \"={{ $('Validate Training Parameters').item.json.trainingParams.freeze_backbone }}\",\n    \"finetuning_lr_factor\": \"={{ $('Validate Training Parameters').item.json.trainingParams.finetuning_lr_factor }}\",\n    \"training_mode\": \"={{ $('Validate Training Parameters').item.json.configInfo.training_mode }}\",\n    \"backbone_mode\": \"={{ $('Validate Training Parameters').item.json.configInfo.backbone_mode }}\"\n  },\n  \"workflow_id\": \"={{ $('Validate Training Parameters').item.json.workflow_id }}\",\n  \"completed_at\": \"={{ new Date().toISOString() }}\"\n}",
         "options": {}
       },
       "id": "success-response",
