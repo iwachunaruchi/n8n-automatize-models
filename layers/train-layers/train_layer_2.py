@@ -877,7 +877,8 @@ class Layer2Trainer:
             
             # Guardar checkpoints cada 5 épocas
             if epoch % 5 == 0:
-                self.save_models(output_dir / f"checkpoint_epoch_{epoch}.pth")
+                checkpoint_name = f"checkpoint_epoch_{epoch}.pth"
+                self.save_models(output_dir / checkpoint_name)
         
         # Guardar modelos finales
         self.save_models(output_dir / "final_models.pth")
@@ -885,20 +886,65 @@ class Layer2Trainer:
         # Crear gráficos de entrenamiento
         self.plot_training_history(output_dir)
         
-        print(f"\n🎉 Entrenamiento completado. Modelos guardados en: {output_dir}")
+        print(f"\n🎉 Entrenamiento completado. Modelos guardados en MinIO (bucket: models/layer_2/)")
+        print(f"📁 Archivos generados:")
+        print(f"   - final_models.pth (modelo final)")
+        print(f"   - training_history.png (gráficas de entrenamiento)")
+        if SERVICES_AVAILABLE:
+            print(f"   - checkpoints cada 5 épocas")
+        else:
+            print(f"⚠️ Algunos archivos pueden haberse guardado localmente en: {output_dir}")
     
     def save_models(self, path: Path):
-        """Guardar modelos"""
-        torch.save({
+        """Guardar modelos en MinIO"""
+        import tempfile
+        import io
+        
+        # Crear datos del modelo
+        model_data = {
             'nafnet_state_dict': self.nafnet.state_dict(),
             'docunet_state_dict': self.docunet.state_dict(),
             'nafnet_optimizer': self.nafnet_optimizer.state_dict(),
             'docunet_optimizer': self.docunet_optimizer.state_dict(),
             'training_history': self.training_history
-        }, path)
+        }
+        
+        # Guardar en memoria como bytes
+        buffer = io.BytesIO()
+        torch.save(model_data, buffer)
+        buffer.seek(0)
+        model_bytes = buffer.getvalue()
+        
+        # Extraer nombre del archivo del path
+        model_filename = path.name
+        
+        # Subir a MinIO si el servicio está disponible
+        if SERVICES_AVAILABLE and minio_service:
+            try:
+                # Subir usando el servicio de MinIO
+                minio_path = minio_service.upload_model(
+                    model_data=model_bytes,
+                    layer="2",
+                    model_name=model_filename
+                )
+                print(f"✅ Modelo guardado en MinIO: {minio_path}")
+            except Exception as e:
+                print(f"⚠️ Error guardando en MinIO: {e}")
+                # Fallback: guardar localmente
+                torch.save(model_data, path)
+                print(f"💾 Modelo guardado localmente: {path}")
+        else:
+            # Fallback: guardar localmente si MinIO no está disponible
+            torch.save(model_data, path)
+            print(f"💾 Modelo guardado localmente (MinIO no disponible): {path}")
+        
+        buffer.close()
     
     def plot_training_history(self, output_dir: Path):
-        """Crear gráficos del entrenamiento"""
+        """Crear gráficos del entrenamiento y guardarlos en MinIO"""
+        import tempfile
+        import io
+        
         plt.figure(figsize=(15, 5))
         
         epochs = range(1, len(self.training_history['nafnet_losses']) + 1)
@@ -928,6 +974,42 @@ class Layer2Trainer:
         plt.plot(epochs, self.training_history['docunet_losses'], 'r-', label='DocUNet', alpha=0.7)
         plt.plot(epochs, self.training_history['combined_losses'], 'g-', label='Combinada', alpha=0.7)
         plt.xlabel('Época')
+        plt.ylabel('Pérdida')
+        plt.title('Todas las Pérdidas')
+        plt.legend()
+        plt.grid(True)
+        
+        plt.tight_layout()
+        
+        # Guardar en memoria como bytes
+        buffer = io.BytesIO()
+        plt.savefig(buffer, format='png', dpi=150, bbox_inches='tight')
+        buffer.seek(0)
+        image_bytes = buffer.getvalue()
+        
+        # Subir a MinIO si está disponible
+        if SERVICES_AVAILABLE and minio_service:
+            try:
+                # Subir gráfica a MinIO
+                graph_filename = "training_history.png"
+                minio_service.upload_file(
+                    file_data=image_bytes,
+                    bucket='models',
+                    filename=f"layer_2/{graph_filename}"
+                )
+                print(f"📊 Gráfica guardada en MinIO: layer_2/{graph_filename}")
+            except Exception as e:
+                print(f"⚠️ Error guardando gráfica en MinIO: {e}")
+                # Fallback: guardar localmente
+                plt.savefig(output_dir / "training_history.png", dpi=150, bbox_inches='tight')
+                print(f"📊 Gráfica guardada localmente: {output_dir / 'training_history.png'}")
+        else:
+            # Fallback: guardar localmente
+            plt.savefig(output_dir / "training_history.png", dpi=150, bbox_inches='tight')
+            print(f"📊 Gráfica guardada localmente (MinIO no disponible): {output_dir / 'training_history.png'}")
+        
+        plt.close()
+        buffer.close()
         plt.ylabel('Pérdida')
         plt.title('Todas las Pérdidas')
         plt.legend()

@@ -42,6 +42,13 @@ outputs/
 .nyc_output/
 tests/
 
+# Scripts de prueba y desarrollo (no necesarios en producción)
+test_*.py
+demo_*.py
+quick_*.py
+use_layer2_model_from_minio.py
+*_test.py
+
 # Node.js (si aplica)
 node_modules/
 npm-debug.log*
