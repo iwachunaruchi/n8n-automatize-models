@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # MinIO - Object Storage
   minio:
@@ -33,18 +31,41 @@ services:
     entrypoint: >
       /bin/sh -c "
       sleep 10;
+      echo 'Configurando MinIO...';
       /usr/bin/mc alias set myminio http://minio:9000 minio minio123;
+      
+      echo 'Creando buckets basicos...';
       /usr/bin/mc mb myminio/document-degraded || true;
       /usr/bin/mc mb myminio/document-clean || true;
       /usr/bin/mc mb myminio/document-restored || true;
       /usr/bin/mc mb myminio/document-training || true;
       /usr/bin/mc mb myminio/models || true;
+      
+      echo 'Configurando permisos publicos...';
       /usr/bin/mc anonymous set public myminio/document-degraded;
       /usr/bin/mc anonymous set public myminio/document-clean;
       /usr/bin/mc anonymous set public myminio/document-restored;
       /usr/bin/mc anonymous set public myminio/document-training;
       /usr/bin/mc anonymous set public myminio/models;
-      echo 'Buckets creados y configurados exitosamente';
+      
+      echo 'Creando estructura de carpetas para modelos preentrenados...';
+      echo '' | /usr/bin/mc pipe myminio/models/pretrained_models/.keep;
+      echo '' | /usr/bin/mc pipe myminio/models/pretrained_models/layer_1/.keep;
+      echo '' | /usr/bin/mc pipe myminio/models/pretrained_models/layer_2/.keep;
+      echo '' | /usr/bin/mc pipe myminio/models/pretrained_models/layer_2/nafnet/.keep;
+      echo '' | /usr/bin/mc pipe myminio/models/pretrained_models/layer_2/docunet/.keep;
+      echo '' | /usr/bin/mc pipe myminio/models/pretrained_models/general/.keep;
+      
+      echo 'Creando archivos README basicos...';
+      echo '# Modelos Preentrenados - Estructura de carpetas configurada automaticamente' | /usr/bin/mc pipe myminio/models/pretrained_models/README.md;
+      echo '# Layer 1 Models - Para primera capa de restauracion' | /usr/bin/mc pipe myminio/models/pretrained_models/layer_1/README.md;
+      echo '# NAFNet Models - Modelos especializados en denoising' | /usr/bin/mc pipe myminio/models/pretrained_models/layer_2/nafnet/README.md;
+      echo '# DocUNet Models - Modelos para unwrapping de documentos' | /usr/bin/mc pipe myminio/models/pretrained_models/layer_2/docunet/README.md;
+      
+      echo 'Configuracion completa de MinIO finalizada exitosamente!';
+      echo 'Buckets: document-degraded, document-clean, document-restored, document-training, models';
+      echo 'Estructura de modelos preentrenados configurada';
+      echo 'Acceso MinIO Console: http://localhost:9001 (minio/minio123)';
       "
 
   # PostgreSQL - Para n8n
@@ -100,8 +121,8 @@ services:
   # API de Restauración - Producción
   doc-restoration-api:
     build: 
-      context: .
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: docker/Dockerfile
     container_name: doc-restoration-api
     ports:
       - "8000:8000"
@@ -140,8 +161,8 @@ services:
   # API de Restauración - Desarrollo (con hot reload)
   doc-restoration-api-dev:
     build: 
-      context: .
-      dockerfile: Dockerfile.dev
+      context: ..
+      dockerfile: docker/Dockerfile.dev
     container_name: doc-restoration-api-dev
     ports:
       - "8001:8000"  # Puerto diferente para desarrollo
@@ -185,8 +206,8 @@ services:
   # Servicio de entrenamiento (separado)
   training-service:
     build: 
-      context: .
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: docker/Dockerfile
     container_name: training-service
     environment:
       # MinIO Configuration
@@ -209,7 +230,6 @@ services:
     volumes:
       - ./outputs:/app/outputs
       - ./models:/app/models
-      - ./data:/app/data
       - training_logs:/app/logs
     networks:
       - doc-restoration-network

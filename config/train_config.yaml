@@ -12,10 +12,10 @@ model:
   dual_pixel_task: false
 
 data:
-  train_degraded: 'data/train/degraded'
-  train_clean: 'data/train/clean'
-  val_degraded: 'data/val/degraded'
-  val_clean: 'data/val/clean'
+  # MinIO buckets (configurados en api/config/constants.py)
+  training_bucket: 'document-training'
+  clean_bucket: 'document-clean'
+  degraded_bucket: 'document-degraded'
   image_size: [256, 256] # [height, width]
 
 training:

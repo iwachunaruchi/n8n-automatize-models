@@ -87,30 +87,57 @@ def demo_image_classification():
     
     client = SyntheticDataClient()
     
-    # Buscar imágenes de ejemplo
-    test_images = []
-    data_dirs = ["data/train/clean", "data/train/degraded"]
-    
-    for data_dir in data_dirs:
-        if os.path.exists(data_dir):
-            for file in os.listdir(data_dir)[:2]:  # Solo 2 por directorio
-                if file.endswith(('.png', '.jpg', '.jpeg')):
-                    test_images.append(os.path.join(data_dir, file))
+    # Obtener imágenes de ejemplo desde MinIO
+    try:
+        # Usar imágenes desde buckets de MinIO en lugar de archivos locales
+        print("📥 Obteniendo imágenes de ejemplo desde MinIO...")
+        
+        response = requests.get(f"{client.api_url}/files/list/document-clean")
+        if response.status_code == 200:
+            clean_files = response.json().get('files', [])[:2]
+            test_images = [(f, 'clean') for f in clean_files]
+        else:
+            test_images = []
+            
+        response = requests.get(f"{client.api_url}/files/list/document-degraded")
+        if response.status_code == 200:
+            degraded_files = response.json().get('files', [])[:2]
+            test_images.extend([(f, 'degraded') for f in degraded_files])
+            
+    except Exception as e:
+        print(f"❌ Error obteniendo archivos de MinIO: {e}")
+        test_images = []
     
     if not test_images:
-        print("❌ No se encontraron imágenes de prueba")
+        print("❌ No se encontraron imágenes de prueba en MinIO")
         return
     
-    for image_path in test_images:
+    for filename, bucket_type in test_images:
         try:
-            print(f"\n📸 Analizando: {os.path.basename(image_path)}")
-            result = client.classify_image_quality(image_path)
+            print(f"\n📸 Analizando: {filename} ({bucket_type})")
             
-            print(f"  🏷️  Clasificación: {result['classification']}")
-            print(f"  📊 Confianza: {result['confidence']:.2f}")
-            print(f"  📈 Score de calidad: {result['metrics']['quality_score']:.1f}")
-            print(f"  🔍 Sharpness: {result['metrics']['sharpness']:.1f}")
+            # Descargar imagen desde MinIO para análisis
+            bucket = 'document-clean' if bucket_type == 'clean' else 'document-degraded'
+            response = requests.get(f"{client.api_url}/files/download/{bucket}/{filename}")
             
+            if response.status_code == 200:
+                # Crear archivo temporal para análisis
+                temp_path = f"temp_{filename}"
+                with open(temp_path, 'wb') as f:
+                    f.write(response.content)
+                
+                result = client.classify_image_quality(temp_path)
+                
+                print(f"  🏷️  Clasificación: {result['classification']}")
+                print(f"  📊 Confianza: {result['confidence']:.2f}")
+                print(f"  📈 Score de calidad: {result['metrics']['quality_score']:.1f}")
+                print(f"  🔍 Sharpness: {result['metrics']['sharpness']:.1f}")
+                
+                # Limpiar archivo temporal
+                os.remove(temp_path)
+            else:
+                print(f"  ❌ Error descargando archivo: {response.status_code}")
+                
         except Exception as e:
             print(f"  ❌ Error: {e}")
 
@@ -121,16 +148,26 @@ def demo_workflow_complete():
     
     client = SyntheticDataClient()
     
-    # Buscar una imagen para probar
+    # Obtener imagen de ejemplo desde MinIO en lugar de archivos locales
     test_image = None
-    for data_dir in ["data/train/clean", "data/train/degraded"]:
-        if os.path.exists(data_dir):
-            for file in os.listdir(data_dir):
-                if file.endswith(('.png', '.jpg', '.jpeg')):
-                    test_image = os.path.join(data_dir, file)
-                    break
-            if test_image:
-                break
+    try:
+        print("📥 Buscando imagen de ejemplo en MinIO...")
+        response = requests.get(f"{client.api_url}/files/list/document-clean")
+        if response.status_code == 200:
+            clean_files = response.json().get('files', [])
+            if clean_files:
+                # Descargar primera imagen para el demo
+                filename = clean_files[0]
+                response = requests.get(f"{client.api_url}/files/download/document-clean/{filename}")
+                if response.status_code == 200:
+                    test_image = f"temp_{filename}"
+                    with open(test_image, 'wb') as f:
+                        f.write(response.content)
+                    print(f"✅ Usando imagen: {filename}")
+                    
+    except Exception as e:
+        print(f"❌ Error obteniendo imagen de MinIO: {e}")
+        test_image = None
     
     if not test_image:
         print("❌ No se encontraron imágenes de prueba")
@@ -172,6 +209,12 @@ def demo_workflow_complete():
             
         except Exception as e:
             print(f"❌ Error en API directa: {e}")
+    
+    finally:
+        # Limpiar archivo temporal
+        if test_image and os.path.exists(test_image):
+            os.remove(test_image)
+            print(f"🧹 Archivo temporal limpiado: {test_image}")
 
 def demo_dataset_stats():
     """Demo: Estadísticas del dataset"""
