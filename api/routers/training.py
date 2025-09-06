@@ -10,12 +10,24 @@ import logging
 import sys
 import os
 from typing import Optional
+from pydantic import BaseModel
 
 # Configurar logger
 logger = logging.getLogger(__name__)
 
 # Agregar path para importaciones
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+class Layer2TrainingRequest(BaseModel):
+    """Modelo para request de entrenamiento Layer 2"""
+    num_epochs: int = 10
+    max_pairs: int = 100
+    batch_size: int = 2
+    use_training_bucket: bool = True
+    use_finetuning: bool = True
+    freeze_backbone: bool = False
+    finetuning_lr_factor: float = 0.1
 
 # Importar servicio de entrenamiento
 try:
@@ -63,54 +75,57 @@ async def start_layer1_evaluation(
 
 @router.post("/layer2/train")
 async def start_layer2_training(
-    background_tasks: BackgroundTasks,
-    num_epochs: int = 10,
-    max_pairs: int = 100,
-    batch_size: int = 2,
-    use_training_bucket: bool = True,
-    use_finetuning: bool = True,
-    freeze_backbone: bool = False,
-    finetuning_lr_factor: float = 0.1
+    request: Layer2TrainingRequest,
+    background_tasks: BackgroundTasks
 ):
     """
     Iniciar entrenamiento de Capa 2 (NAFNet + DocUNet) con fine-tuning
     
-    Args:
-        num_epochs: Número de épocas de entrenamiento
-        max_pairs: Máximo número de pares de entrenamiento a usar
-        batch_size: Tamaño del batch
-        use_training_bucket: Si usar bucket 'document-training' con pares sintéticos (recomendado)
-                           False: usar buckets separados 'document-degraded' y 'document-clean'
-        use_finetuning: Si usar fine-tuning con modelo preentrenado NAFNet-SIDD-width64
-        freeze_backbone: Si congelar las capas del backbone preentrenado
-        finetuning_lr_factor: Factor de reducción del learning rate para capas preentrenadas (0.1 = 10% del LR base)
+    Body JSON:
+    {
+        "num_epochs": 10,
+        "max_pairs": 100,
+        "batch_size": 2,
+        "use_training_bucket": true,
+        "use_finetuning": true,
+        "freeze_backbone": false,
+        "finetuning_lr_factor": 0.1
+    }
     """
     try:
         if not TRAINING_SERVICE_AVAILABLE:
             raise HTTPException(status_code=503, detail="Servicio de entrenamiento no disponible")
         
         # Validar parámetros usando el servicio
-        validation_errors = training_service.validate_training_parameters(num_epochs, max_pairs, batch_size)
+        validation_errors = training_service.validate_training_parameters(
+            request.num_epochs, request.max_pairs, request.batch_size
+        )
         if validation_errors:
             raise HTTPException(status_code=400, detail=f"Parámetros inválidos: {', '.join(validation_errors)}")
         
         # Crear trabajo usando el servicio
         job_id = training_service.create_job(
             "layer2_training",
-            num_epochs=num_epochs,
-            max_pairs=max_pairs,
-            batch_size=batch_size,
-            use_training_bucket=use_training_bucket,
-            use_finetuning=use_finetuning,
-            freeze_backbone=freeze_backbone,
-            finetuning_lr_factor=finetuning_lr_factor
+            num_epochs=request.num_epochs,
+            max_pairs=request.max_pairs,
+            batch_size=request.batch_size,
+            use_training_bucket=request.use_training_bucket,
+            use_finetuning=request.use_finetuning,
+            freeze_backbone=request.freeze_backbone,
+            finetuning_lr_factor=request.finetuning_lr_factor
         )
         
-        # Ejecutar en background usando el servicio
+        # Ejecutar en background usando argumentos con nombre
         background_tasks.add_task(
-            training_service.start_layer2_training, 
-            job_id, num_epochs, max_pairs, batch_size, use_training_bucket,
-            use_finetuning, freeze_backbone, finetuning_lr_factor
+            training_service.start_layer2_training,
+            job_id=job_id,
+            num_epochs=request.num_epochs,
+            max_pairs=request.max_pairs,
+            batch_size=request.batch_size,
+            use_training_bucket=request.use_training_bucket,
+            use_finetuning=request.use_finetuning,
+            freeze_backbone=request.freeze_backbone,
+            finetuning_lr_factor=request.finetuning_lr_factor
         )
         
         return JSONResponse({
@@ -119,15 +134,15 @@ async def start_layer2_training(
             "job_id": job_id,
             "type": "layer2_training",
             "parameters": {
-                "num_epochs": num_epochs,
-                "max_pairs": max_pairs,
-                "batch_size": batch_size,
-                "use_training_bucket": use_training_bucket,
-                "use_finetuning": use_finetuning,
-                "freeze_backbone": freeze_backbone,
-                "finetuning_lr_factor": finetuning_lr_factor,
-                "data_source": "document-training bucket" if use_training_bucket else "separate buckets",
-                "pretrained_model": "NAFNet-SIDD-width64" if use_finetuning else "None"
+                "num_epochs": request.num_epochs,
+                "max_pairs": request.max_pairs,
+                "batch_size": request.batch_size,
+                "use_training_bucket": request.use_training_bucket,
+                "use_finetuning": request.use_finetuning,
+                "freeze_backbone": request.freeze_backbone,
+                "finetuning_lr_factor": request.finetuning_lr_factor,
+                "data_source": "document-training bucket" if request.use_training_bucket else "separate buckets",
+                "pretrained_model": "NAFNet-SIDD-width64" if request.use_finetuning else "None"
             },
             "check_status_url": f"/training/status/{job_id}"
         })
