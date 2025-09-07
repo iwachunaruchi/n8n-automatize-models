@@ -16,8 +16,10 @@ MINIO_CONFIG = {
 }
 
 # Mapeo de modelos locales a rutas en MinIO
+# Obtener la ruta base del proyecto
+project_root = Path(__file__).parent.parent.parent.parent
 LOCAL_MODELS = {
-    'models/NAFnet/NAFNet-SIDD-width64.pth': {
+    str(project_root / 'models/NAFnet/NAFNet-SIDD-width64.pth'): {
         'minio_path': 'pretrained_models/layer_2/nafnet/NAFNet-SIDD-width64.pth',
         'description': 'NAFNet modelo preentrenado en SIDD dataset para denoising',
         'type': 'nafnet',

@@ -118,54 +118,15 @@ services:
       timeout: 10s
       retries: 3
 
-  # API de Restauración - Producción
+  # API de Restauración - Con hot reload, debug y healthcheck
   doc-restoration-api:
     build: 
       context: ..
       dockerfile: docker/Dockerfile
     container_name: doc-restoration-api
     ports:
-      - "8000:8000"
-    environment:
-      # MinIO Configuration
-      MINIO_ENDPOINT: minio:9000
-      MINIO_ACCESS_KEY: minio
-      MINIO_SECRET_KEY: minio123
-      MINIO_SECURE: "false"
-      
-      # API Configuration
-      API_HOST: 0.0.0.0
-      API_PORT: 8000
-      ENVIRONMENT: production
-      
-      # Application Settings
-      PYTHONPATH: /app
-      
-      # Processing Limits
-      MAX_FILE_SIZE: 50MB
-      MAX_BATCH_SIZE: 100
-      CONCURRENT_JOBS: 3
-    depends_on:
-      minio:
-        condition: service_healthy
-      postgres:
-        condition: service_healthy
-    volumes:
-      - ./outputs:/app/outputs
-      - ./models:/app/models
-      - api_logs:/app/logs
-    networks:
-      - doc-restoration-network
-    restart: unless-stopped
-
-  # API de Restauración - Desarrollo (con hot reload)
-  doc-restoration-api-dev:
-    build: 
-      context: ..
-      dockerfile: docker/Dockerfile.dev
-    container_name: doc-restoration-api-dev
-    ports:
-      - "8001:8000"  # Puerto diferente para desarrollo
+      - "8000:8000"    # API principal
+      - "5679:5679"    # Puerto debug
     environment:
       # MinIO Configuration
       MINIO_ENDPOINT: minio:9000
@@ -185,23 +146,25 @@ services:
       
       # Processing Limits
       MAX_FILE_SIZE: 50MB
-      MAX_BATCH_SIZE: 10
-      CONCURRENT_JOBS: 1
+      MAX_BATCH_SIZE: 100
+      CONCURRENT_JOBS: 3
     depends_on:
       minio:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
     volumes:
+      # Volúmenes para hot reload
       - ../outputs:/app/outputs
       - ../models:/app/models
-      - ../src:/app/src         
-      - ../api:/app/api          
-      - ../config:/app/config     
-      - ../scripts:/app/scripts   
+      - ../src:/app/src           # Hot reload
+      - ../api:/app/api           # Hot reload
+      - ../config:/app/config     # Hot reload
+      - ../scripts:/app/scripts   # Hot reload
       - api_logs:/app/logs
     networks:
       - doc-restoration-network
-    profiles:
-      - development
+    restart: unless-stopped
 
   # Servicio de entrenamiento (separado)
   training-service:
