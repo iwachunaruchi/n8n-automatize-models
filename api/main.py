@@ -1,7 +1,7 @@
-0#!/usr/bin/env python3
+#!/usr/bin/env python3
 """
 API REST para Restauración de Documentos - VERSIÓN MODULAR
-Integración con n8n y MinIO para automatización
+Integración con n8n y MinIO para automatización + Cola Compartida para Jobs
 """
 
 import sys
@@ -10,7 +10,9 @@ from pathlib import Path
 
 # Agregar el directorio actual al PYTHONPATH para importaciones
 current_dir = Path(__file__).parent
+project_root = current_dir.parent
 sys.path.insert(0, str(current_dir))
+sys.path.insert(0, str(project_root))
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -18,9 +20,16 @@ from fastapi.responses import JSONResponse
 import logging
 from datetime import datetime
 
+# Importar cola compartida
+from shared_job_queue import create_shared_queue
+
 # Configuración de logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Inicializar cola compartida para jobs
+shared_queue = create_shared_queue()
+logger.info("🔄 Cola compartida inicializada")
 
 # Importar configuración
 try:

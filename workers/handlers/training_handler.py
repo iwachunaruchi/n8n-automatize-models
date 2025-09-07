@@ -13,8 +13,8 @@ from typing import Dict, Any
 logger = logging.getLogger("TrainingHandler")
 
 class TrainingHandler:
-    """Handler especializado para jobs de entrenamiento"""
-    
+    """Handler especializado para jobs de entrenamiento y evaluación"""
+
     def __init__(self, training_service=None, minio_service=None):
         self.training_service = training_service
         self.minio_service = minio_service
@@ -28,35 +28,69 @@ class TrainingHandler:
         batch_size = params.get("batch_size", 2)
         max_pairs = params.get("max_pairs", 100)
         
-        logger.info(f"🧠 Iniciando entrenamiento Layer 2 - Job: {job_id}")
-        logger.info(f"   📊 Parámetros: {epochs} épocas, batch_size={batch_size}, max_pairs={max_pairs}")
-        
-        if not self.service_available:
-            raise Exception("TrainingService no disponible")
+        logger.info(f"🧠 Iniciando entrenamiento Layer 2: {job_id}")
+        shared_queue.update_job_status(job_id, "running", started_at=datetime.now().isoformat())
         
         try:
-            logger.info("🔧 Usando TrainingService")
+            if not self.service_available:
+                raise Exception("Servicio de entrenamiento no disponible")
             
-            # Aquí iría la llamada real al TrainingService
-            # result = await self.training_service.train_layer2(params)
+            # Ejecutar entrenamiento real usando el servicio
+            result = await self.training_service.start_layer2_training(
+                job_id=job_id,
+                num_epochs=epochs,
+                max_pairs=max_pairs,
+                batch_size=batch_size,
+                use_training_bucket=params.get("use_training_bucket", True),
+                use_finetuning=params.get("use_finetuning", True),
+                freeze_backbone=params.get("freeze_backbone", False),
+                finetuning_lr_factor=params.get("finetuning_lr_factor", 0.1)
+            )
             
-            for epoch in range(epochs):
-                await asyncio.sleep(1)
-                progress = int((epoch + 1) / epochs * 100)
-                
-                shared_queue.update_job_status(
-                    job_id,
-                    "running",
-                    progress=progress,
-                    current_epoch=epoch + 1,
-                    total_epochs=epochs,
-                    batch_size=batch_size
-                )
-                
-                logger.info(f"  📊 Época {epoch + 1}/{epochs} completada ({progress}%)")
-            
-            logger.info("✅ Entrenamiento completado")
+            shared_queue.update_job_status(
+                job_id, "completed", 
+                completed_at=datetime.now().isoformat(),
+                results=result,
+                progress=100
+            )
+            logger.info(f"✅ Entrenamiento Layer 2 completado: {job_id}")
             
         except Exception as e:
-            logger.error(f"❌ Error en TrainingService: {e}")
-            raise
+            logger.error(f"❌ Error en entrenamiento Layer 2 {job_id}: {e}")
+            shared_queue.update_job_status(
+                job_id, "failed",
+                completed_at=datetime.now().isoformat(), 
+                error=str(e)
+            )
+    
+    async def process_evaluation_job(self, job: Dict[str, Any], shared_queue) -> None:
+        """Procesar job de evaluación Layer 1"""
+        job_id = job["job_id"]
+        params = job["parameters"]
+        max_images = params.get("max_images", 30)
+        
+        logger.info(f"🔍 Iniciando evaluación Layer 1: {job_id}")
+        shared_queue.update_job_status(job_id, "running", started_at=datetime.now().isoformat())
+        
+        try:
+            if not self.service_available:
+                raise Exception("Servicio de entrenamiento no disponible")
+            
+            # Ejecutar evaluación real usando el servicio
+            result = await self.training_service.start_layer1_evaluation(job_id, max_images)
+            
+            shared_queue.update_job_status(
+                job_id, "completed",
+                completed_at=datetime.now().isoformat(),
+                results=result,
+                progress=100
+            )
+            logger.info(f"✅ Evaluación Layer 1 completada: {job_id}")
+            
+        except Exception as e:
+            logger.error(f"❌ Error en evaluación Layer 1 {job_id}: {e}")
+            shared_queue.update_job_status(
+                job_id, "failed",
+                completed_at=datetime.now().isoformat(),
+                error=str(e)
+            )

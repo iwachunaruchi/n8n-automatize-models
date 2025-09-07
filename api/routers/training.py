@@ -18,6 +18,20 @@ logger = logging.getLogger(__name__)
 # Agregar path para importaciones
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# Importar cola compartida
+from shared_job_queue import WindowsSharedJobQueue
+from datetime import datetime
+
+# Inicializar cola compartida
+shared_queue = WindowsSharedJobQueue()
+
+def create_job_id(job_type: str) -> str:
+    """Crear ID único para job"""
+    from datetime import datetime
+    import uuid
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    short_uuid = str(uuid.uuid4())[:8]
+    return f"{job_type}_{timestamp}_{short_uuid}"
 
 class Layer2TrainingRequest(BaseModel):
     """Modelo para request de entrenamiento Layer 2"""
@@ -54,12 +68,22 @@ async def start_layer1_evaluation(
         if not TRAINING_SERVICE_AVAILABLE:
             raise HTTPException(status_code=503, detail="Servicio de entrenamiento no disponible")
         
-        # Crear trabajo usando el servicio
-        job_id = training_service.create_job("layer1_evaluation", max_images=max_images)
+        # Crear trabajo usando la cola compartida
+        job_id = create_job_id("layer1_evaluation")
         
-        # Ejecutar en background usando asyncio.create_task() para verdadero paralelismo
-        import asyncio
-        asyncio.create_task(training_service.start_layer1_evaluation(job_id, max_images))
+        job_data = {
+            "job_id": job_id,
+            "job_type": "layer1_evaluation", 
+            "parameters": {
+                "max_images": max_images
+            },
+            "created_at": datetime.now().isoformat(),
+            "status": "queued"
+        }
+        
+        # Enviar job a cola compartida para procesamiento por worker
+        shared_queue.enqueue_job(job_data)
+        logger.info(f"🔍 Layer1 evaluation job enviado a cola compartida: {job_id}")
         
         return JSONResponse({
             "status": "success",
@@ -105,31 +129,27 @@ async def start_layer2_training(
             raise HTTPException(status_code=400, detail=f"Parámetros inválidos: {', '.join(validation_errors)}")
         
         # Crear trabajo usando el servicio
-        job_id = training_service.create_job(
-            "layer2_training",
-            num_epochs=request.num_epochs,
-            max_pairs=request.max_pairs,
-            batch_size=request.batch_size,
-            use_training_bucket=request.use_training_bucket,
-            use_finetuning=request.use_finetuning,
-            freeze_backbone=request.freeze_backbone,
-            finetuning_lr_factor=request.finetuning_lr_factor
-        )
+        job_id = create_job_id("layer2_training")
         
-        # Ejecutar en background usando asyncio.create_task() para verdadero paralelismo
-        import asyncio
-        asyncio.create_task(
-            training_service.start_layer2_training(
-                job_id=job_id,
-                num_epochs=request.num_epochs,
-                max_pairs=request.max_pairs,
-                batch_size=request.batch_size,
-                use_training_bucket=request.use_training_bucket,
-                use_finetuning=request.use_finetuning,
-                freeze_backbone=request.freeze_backbone,
-                finetuning_lr_factor=request.finetuning_lr_factor
-            )
-        )
+        job_data = {
+            "job_id": job_id,
+            "job_type": "layer2_training",
+            "parameters": {
+                "num_epochs": request.num_epochs,
+                "max_pairs": request.max_pairs,
+                "batch_size": request.batch_size,
+                "use_training_bucket": request.use_training_bucket,
+                "use_finetuning": request.use_finetuning,
+                "freeze_backbone": request.freeze_backbone,
+                "finetuning_lr_factor": request.finetuning_lr_factor
+            },
+            "created_at": datetime.now().isoformat(),
+            "status": "queued"
+        }
+        
+        # Enviar job a cola compartida para procesamiento por worker
+        shared_queue.enqueue_job(job_data)
+        logger.info(f"🧠 Training job enviado a cola compartida: {job_id}")
         
         return JSONResponse({
             "status": "success",
@@ -161,6 +181,26 @@ async def get_training_status(job_id: str):
         if not TRAINING_SERVICE_AVAILABLE:
             raise HTTPException(status_code=503, detail="Servicio de entrenamiento no disponible")
         
+        # Primero intentar obtener del sistema de cola compartida
+        job_status = shared_queue.get_job_status(job_id)
+        
+        if job_status:
+            # Job encontrado en cola compartida
+            return JSONResponse({
+                "job_id": job_id,
+                "type": job_status.get("job_type", "unknown"),
+                "status": job_status.get("status", "unknown"),
+                "progress": job_status.get("progress", 0),
+                "created_at": job_status.get("created_at"),
+                "started_at": job_status.get("started_at"),
+                "completed_at": job_status.get("completed_at"),
+                "error": job_status.get("error"),
+                "results": job_status.get("results"),
+                "parameters": job_status.get("parameters", {}),
+                "source": "shared_queue"
+            })
+        
+        # Si no está en cola compartida, buscar en sistema tradicional
         job = training_service.get_job_status(job_id)
         
         if not job:
@@ -169,7 +209,6 @@ async def get_training_status(job_id: str):
         # Calcular duración si está en progreso
         duration = None
         if job["status"] in ["running", "completed", "failed"]:
-            from datetime import datetime
             start_time = datetime.fromisoformat(job["start_time"])
             current_time = datetime.now()
             duration = str(current_time - start_time)
@@ -197,6 +236,7 @@ async def get_training_status(job_id: str):
                 "batch_size": params.get("batch_size")
             }
         
+        response["source"] = "training_service"
         return JSONResponse(response)
         
     except HTTPException:

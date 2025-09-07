@@ -34,24 +34,11 @@ class SyntheticDataHandler:
         try:
             logger.info("🔧 Usando SyntheticDataService")
             
-            # Aquí iría la llamada real al SyntheticDataService
-            # result = await self.synthetic_service.generate_data(params)
-            
-            for i in range(count):
-                await asyncio.sleep(0.1)
-                progress = int((i + 1) / count * 100)
-                
-                shared_queue.update_job_status(
-                    job_id,
-                    "running",
-                    progress=progress,
-                    generated_images=i + 1,
-                    total_images=count,
-                    bucket=bucket
-                )
-                
-                if (i + 1) % 10 == 0:
-                    logger.info(f"  🎨 {i + 1}/{count} imágenes generadas ({progress}%)")
+            # Llamada real al SyntheticDataService
+            result = await self.synthetic_service.generate_training_pairs_async(
+                source_bucket=bucket,
+                count=count
+            )
             
             logger.info("✅ Generación completada")
             

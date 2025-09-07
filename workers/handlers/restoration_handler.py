@@ -34,11 +34,20 @@ class RestorationHandler:
         try:
             logger.info("🔧 Usando RestorationService")
             
-            # Aquí iría la llamada real al RestorationService
-            # result = await self.restoration_service.restore_batch(params)
+            # Para el ejemplo, creamos una lista ficticia de archivos
+            # En un caso real, obtendrías los archivos del bucket especificado
+            files_data = [{"file_data": f"file_{i}", "filename": f"doc_{i}.jpg"} 
+                         for i in range(file_count)]
             
+            # Llamada real al RestorationService (método síncrono)
+            result = self.restoration_service.restore_batch(
+                files_data=files_data,
+                background_job_id=job_id
+            )
+            
+            # Simular progreso ya que el servicio real puede no reportarlo
             for i in range(file_count):
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(0.1)  # Pequeña pausa para simular procesamiento
                 progress = int((i + 1) / file_count * 100)
                 
                 shared_queue.update_job_status(
@@ -50,7 +59,8 @@ class RestorationHandler:
                     model_type=model_type
                 )
                 
-                logger.info(f"  🔧 Archivo {i + 1}/{file_count} restaurado ({progress}%)")
+                if (i + 1) % 5 == 0:
+                    logger.info(f"  🔧 {i + 1}/{file_count} archivos procesados ({progress}%)")
             
             logger.info("✅ Restauración completada")
             

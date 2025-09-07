@@ -39,6 +39,8 @@ class JobProcessor:
             # Dispatch al handler apropiado
             if job_type == "layer2_training":
                 await self.training_handler.process_training_job(job, shared_queue)
+            elif job_type == "layer1_evaluation":
+                await self.training_handler.process_evaluation_job(job, shared_queue)
             elif job_type == "synthetic_data_generation":
                 await self.synthetic_handler.process_synthetic_job(job, shared_queue)
             elif job_type == "batch_restoration":
