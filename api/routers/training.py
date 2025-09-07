@@ -57,8 +57,9 @@ async def start_layer1_evaluation(
         # Crear trabajo usando el servicio
         job_id = training_service.create_job("layer1_evaluation", max_images=max_images)
         
-        # Ejecutar en background usando el servicio
-        background_tasks.add_task(training_service.start_layer1_evaluation, job_id, max_images)
+        # Ejecutar en background usando asyncio.create_task() para verdadero paralelismo
+        import asyncio
+        asyncio.create_task(training_service.start_layer1_evaluation(job_id, max_images))
         
         return JSONResponse({
             "status": "success",
@@ -115,17 +116,19 @@ async def start_layer2_training(
             finetuning_lr_factor=request.finetuning_lr_factor
         )
         
-        # Ejecutar en background usando argumentos con nombre
-        background_tasks.add_task(
-            training_service.start_layer2_training,
-            job_id=job_id,
-            num_epochs=request.num_epochs,
-            max_pairs=request.max_pairs,
-            batch_size=request.batch_size,
-            use_training_bucket=request.use_training_bucket,
-            use_finetuning=request.use_finetuning,
-            freeze_backbone=request.freeze_backbone,
-            finetuning_lr_factor=request.finetuning_lr_factor
+        # Ejecutar en background usando asyncio.create_task() para verdadero paralelismo
+        import asyncio
+        asyncio.create_task(
+            training_service.start_layer2_training(
+                job_id=job_id,
+                num_epochs=request.num_epochs,
+                max_pairs=request.max_pairs,
+                batch_size=request.batch_size,
+                use_training_bucket=request.use_training_bucket,
+                use_finetuning=request.use_finetuning,
+                freeze_backbone=request.freeze_backbone,
+                finetuning_lr_factor=request.finetuning_lr_factor
+            )
         )
         
         return JSONResponse({
