@@ -4,12 +4,19 @@ REFACTORIZADO: Usa jobs_service + Cola Compartida para jobs asíncronos
 """
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
 from typing import Dict, Any
 import logging
 import sys
 import uuid
 from datetime import datetime
+
+# Importar modelos Pydantic desde la carpeta models
+from models.schemas import (
+    JobRequest, 
+    TrainingRequest, 
+    SyntheticDataRequest, 
+    RestorationRequest
+)
 
 # Asegurar imports
 sys.path.append('/app/api')
@@ -35,28 +42,6 @@ router = APIRouter(prefix="/jobs", tags=["Trabajos"])
 
 # Inicializar cola compartida
 shared_queue = create_shared_queue()
-
-# Modelos Pydantic para cola compartida
-class JobRequest(BaseModel):
-    job_type: str
-    parameters: Dict[str, Any] = {}
-    priority: int = 1
-
-class TrainingRequest(BaseModel):
-    num_epochs: int = 10
-    batch_size: int = 2
-    max_pairs: int = 100
-    use_training_bucket: bool = True
-
-class SyntheticDataRequest(BaseModel):
-    count: int = 50
-    bucket: str = "document-clean"
-    augmentation_types: str = "noise blur"
-
-class RestorationRequest(BaseModel):
-    file_count: int = 10
-    model_type: str = "layer2"
-    bucket: str = "document-degraded"
 
 def create_job_id(job_type: str) -> str:
     """Crear ID único para job"""

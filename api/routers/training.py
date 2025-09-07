@@ -10,7 +10,9 @@ import logging
 import sys
 import os
 from typing import Optional
-from pydantic import BaseModel
+
+# Importar modelos Pydantic desde la carpeta models
+from models.schemas import Layer2TrainingRequest
 
 # Configurar logger
 logger = logging.getLogger(__name__)
@@ -32,16 +34,6 @@ def create_job_id(job_type: str) -> str:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     short_uuid = str(uuid.uuid4())[:8]
     return f"{job_type}_{timestamp}_{short_uuid}"
-
-class Layer2TrainingRequest(BaseModel):
-    """Modelo para request de entrenamiento Layer 2"""
-    num_epochs: int = 10
-    max_pairs: int = 100
-    batch_size: int = 2
-    use_training_bucket: bool = True
-    use_finetuning: bool = True
-    freeze_backbone: bool = False
-    finetuning_lr_factor: float = 0.1
 
 # Importar servicio de entrenamiento
 try:
