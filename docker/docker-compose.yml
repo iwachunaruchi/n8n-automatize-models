@@ -1,0 +1,218 @@
+services:
+  # MinIO - Object Storage
+  minio:
+    image: minio/minio:latest
+    container_name: minio-doc-restoration
+    ports:
+      - "9000:9000"      # API
+      - "9001:9001"      # Console
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: minio123
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    networks:
+      - doc-restoration-network
+
+  # MinIO Client - Para configuración inicial
+  minio-setup:
+    image: minio/mc:latest
+    container_name: minio-setup
+    depends_on:
+      - minio
+    networks:
+      - doc-restoration-network
+    entrypoint: >
+      /bin/sh -c "
+      sleep 10;
+      echo 'Configurando MinIO...';
+      /usr/bin/mc alias set myminio http://minio:9000 minio minio123;
+      
+      echo 'Creando buckets basicos...';
+      /usr/bin/mc mb myminio/document-degraded || true;
+      /usr/bin/mc mb myminio/document-clean || true;
+      /usr/bin/mc mb myminio/document-restored || true;
+      /usr/bin/mc mb myminio/document-training || true;
+      /usr/bin/mc mb myminio/models || true;
+      
+      echo 'Configurando permisos publicos...';
+      /usr/bin/mc anonymous set public myminio/document-degraded;
+      /usr/bin/mc anonymous set public myminio/document-clean;
+      /usr/bin/mc anonymous set public myminio/document-restored;
+      /usr/bin/mc anonymous set public myminio/document-training;
+      /usr/bin/mc anonymous set public myminio/models;
+      
+      echo 'Creando estructura de carpetas para modelos preentrenados...';
+      echo '' | /usr/bin/mc pipe myminio/models/pretrained_models/.keep;
+      echo '' | /usr/bin/mc pipe myminio/models/pretrained_models/layer_1/.keep;
+      echo '' | /usr/bin/mc pipe myminio/models/pretrained_models/layer_2/.keep;
+      echo '' | /usr/bin/mc pipe myminio/models/pretrained_models/layer_2/nafnet/.keep;
+      echo '' | /usr/bin/mc pipe myminio/models/pretrained_models/layer_2/docunet/.keep;
+      echo '' | /usr/bin/mc pipe myminio/models/pretrained_models/general/.keep;
+      
+      echo 'Creando archivos README basicos...';
+      echo '# Modelos Preentrenados - Estructura de carpetas configurada automaticamente' | /usr/bin/mc pipe myminio/models/pretrained_models/README.md;
+      echo '# Layer 1 Models - Para primera capa de restauracion' | /usr/bin/mc pipe myminio/models/pretrained_models/layer_1/README.md;
+      echo '# NAFNet Models - Modelos especializados en denoising' | /usr/bin/mc pipe myminio/models/pretrained_models/layer_2/nafnet/README.md;
+      echo '# DocUNet Models - Modelos para unwrapping de documentos' | /usr/bin/mc pipe myminio/models/pretrained_models/layer_2/docunet/README.md;
+      
+      echo 'Configuracion completa de MinIO finalizada exitosamente!';
+      echo 'Buckets: document-degraded, document-clean, document-restored, document-training, models';
+      echo 'Estructura de modelos preentrenados configurada';
+      echo 'Acceso MinIO Console: http://localhost:9001 (minio/minio123)';
+      "
+
+  # PostgreSQL - Para n8n
+  postgres:
+    image: postgres:15-alpine
+    container_name: postgres-n8n
+    environment:
+      POSTGRES_DB: n8n
+      POSTGRES_USER: n8n
+      POSTGRES_PASSWORD: n8n123
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - doc-restoration-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U n8n"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # n8n - Workflow Automation
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: n8n-automation
+    ports:
+      - "5678:5678"
+    environment:
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: postgres
+      DB_POSTGRESDB_PORT: 5432
+      DB_POSTGRESDB_DATABASE: n8n
+      DB_POSTGRESDB_USER: n8n
+      DB_POSTGRESDB_PASSWORD: n8n123
+      N8N_BASIC_AUTH_ACTIVE: "true"
+      N8N_BASIC_AUTH_USER: admin
+      N8N_BASIC_AUTH_PASSWORD: admin123
+      WEBHOOK_URL: http://localhost:5678/
+      GENERIC_TIMEZONE: America/Mexico_City
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./n8n/workflows:/home/node/.n8n/workflows
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - doc-restoration-network
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:5678/healthz || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # API de Restauración - Con hot reload, debug y healthcheck
+  doc-restoration-api:
+    build: 
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: doc-restoration-api
+    ports:
+      - "8000:8000"    # API principal
+      - "5679:5679"    # Puerto debug
+    environment:
+      # MinIO Configuration
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: minio
+      MINIO_SECRET_KEY: minio123
+      MINIO_SECURE: "false"
+      
+      # API Configuration
+      API_HOST: 0.0.0.0
+      API_PORT: 8000
+      ENVIRONMENT: development
+      DEBUG: "true"
+      
+      # Application Settings
+      PYTHONPATH: /app
+      WATCHFILES_FORCE_POLLING: "true"
+      
+      # Processing Limits
+      MAX_FILE_SIZE: 50MB
+      MAX_BATCH_SIZE: 100
+      CONCURRENT_JOBS: 3
+    depends_on:
+      minio:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    volumes:
+      # Volúmenes para hot reload
+      - ../outputs:/app/outputs
+      - ../models:/app/models
+      - ../src:/app/src           # Hot reload
+      - ../api:/app/api           # Hot reload
+      - ../config:/app/config     # Hot reload
+      - ../scripts:/app/scripts   # Hot reload
+      - api_logs:/app/logs
+    networks:
+      - doc-restoration-network
+    restart: unless-stopped
+
+  # Servicio de entrenamiento (separado)
+  training-service:
+    build: 
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: training-service
+    environment:
+      # MinIO Configuration
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: minio
+      MINIO_SECRET_KEY: minio123
+      MINIO_SECURE: "false"
+      
+      # Training Configuration
+      TRAINING_EPOCHS: 50
+      BATCH_SIZE: 8
+      LEARNING_RATE: 1e-4
+      DEVICE: cpu  # Cambiar a 'cuda' si tienes GPU
+      
+      # Application Settings
+      PYTHONPATH: /app
+    depends_on:
+      minio:
+        condition: service_healthy
+    volumes:
+      - ./outputs:/app/outputs
+      - ./models:/app/models
+      - training_logs:/app/logs
+    networks:
+      - doc-restoration-network
+    profiles:
+      - training
+    command: ["python", "-m", "layers.train-layers.train_layer_2"]
+
+volumes:
+  minio_data:
+    name: doc_restoration_minio_data
+  postgres_data:
+    name: doc_restoration_postgres_data
+  n8n_data:
+    name: doc_restoration_n8n_data
+  api_logs:
+    name: doc_restoration_api_logs
+  training_logs:
+    name: doc_restoration_training_logs
+
+networks:
+  doc-restoration-network:
+    name: doc-restoration-network
+    driver: bridge

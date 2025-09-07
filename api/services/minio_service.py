@@ -25,7 +25,8 @@ except ImportError:
         'degraded': 'document-degraded',
         'clean': 'document-clean',
         'restored': 'document-restored',
-        'training': 'document-training'
+        'training': 'document-training',
+        'models': 'models'
     }
 
 logger = logging.getLogger(__name__)
@@ -103,6 +104,68 @@ class MinIOService:
         except Exception as e:
             logger.error(f"Error eliminando archivo: {e}")
             return False
+    
+    def upload_model(self, model_data: bytes, layer: str, model_name: str) -> str:
+        """Subir modelo entrenado a MinIO organizando por capas"""
+        try:
+            # Crear path organizado por capa
+            model_path = f"layer_{layer}/{model_name}"
+            
+            # Subir al bucket models
+            self.client.put_object(
+                Bucket=BUCKETS.get('models', 'models'),
+                Key=model_path,
+                Body=model_data,
+                ContentType='application/octet-stream'
+            )
+            
+            logger.info(f"Modelo guardado exitosamente: {model_path}")
+            return model_path
+            
+        except Exception as e:
+            logger.error(f"Error subiendo modelo: {e}")
+            raise HTTPException(status_code=500, detail=f"Error guardando modelo: {str(e)}")
+    
+    def download_model(self, layer: str, model_name: str) -> bytes:
+        """Descargar modelo específico de una capa"""
+        try:
+            model_path = f"layer_{layer}/{model_name}"
+            response = self.client.get_object(
+                Bucket=BUCKETS.get('models', 'models'),
+                Key=model_path
+            )
+            return response['Body'].read()
+            
+        except Exception as e:
+            logger.error(f"Error descargando modelo {layer}/{model_name}: {e}")
+            raise HTTPException(status_code=404, detail=f"Modelo no encontrado: {layer}/{model_name}")
+    
+    def list_models(self, layer: str = None) -> list:
+        """Listar modelos disponibles, opcionalmente filtrados por capa"""
+        try:
+            prefix = f"layer_{layer}/" if layer else ""
+            
+            response = self.client.list_objects_v2(
+                Bucket=BUCKETS.get('models', 'models'),
+                Prefix=prefix
+            )
+            
+            models = []
+            for obj in response.get('Contents', []):
+                model_info = {
+                    'path': obj['Key'],
+                    'size': obj['Size'],
+                    'last_modified': obj['LastModified'].isoformat(),
+                    'layer': obj['Key'].split('/')[0] if '/' in obj['Key'] else 'unknown',
+                    'filename': obj['Key'].split('/')[-1] if '/' in obj['Key'] else obj['Key']
+                }
+                models.append(model_info)
+            
+            return models
+            
+        except Exception as e:
+            logger.error(f"Error listando modelos: {e}")
+            return []
 
 # Instancia global del servicio
 minio_service = MinIOService()

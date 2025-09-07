@@ -56,6 +56,8 @@ try:
     from routers.synthetic_data import router as synthetic_data_router
     from routers.files import router as files_router
     from routers.jobs import router as jobs_router
+    from routers.training import router as training_router
+    from routers.models import router as models_router
     logger.info("✅ Routers importados exitosamente")
     routers_loaded = True
 except ImportError as e:
@@ -121,8 +123,74 @@ if routers_loaded:
     app.include_router(synthetic_data_router)
     app.include_router(files_router)
     app.include_router(jobs_router)
+    app.include_router(training_router)
+    app.include_router(models_router)
 else:
     logging.warning("Routers no pudieron ser cargados - funcionando en modo básico")
+
+# Función para mostrar todas las rutas
+def show_all_routes():
+    """Mostrar todas las rutas disponibles en la API"""
+    print("\n" + "="*80)
+    print("🚀 DOCUMENT RESTORATION API - RUTAS DISPONIBLES")
+    print("="*80)
+    
+    routes_by_category = {}
+    
+    # Organizar rutas por categorías
+    for route in app.routes:
+        if hasattr(route, 'methods') and hasattr(route, 'path'):
+            methods = list(route.methods)
+            if 'HEAD' in methods:
+                methods.remove('HEAD')
+            if 'OPTIONS' in methods:
+                methods.remove('OPTIONS')
+                
+            if methods:  # Solo mostrar si tiene métodos HTTP válidos
+                path = route.path
+                
+                # Categorizar rutas
+                if path.startswith('/training'):
+                    category = "🎯 ENTRENAMIENTO (TRAINING)"
+                elif path.startswith('/synthetic'):
+                    category = "🔄 DATOS SINTÉTICOS (SYNTHETIC)"
+                elif path.startswith('/restore'):
+                    category = "🛠️ RESTAURACIÓN (RESTORATION)"
+                elif path.startswith('/classify'):
+                    category = "📊 CLASIFICACIÓN (CLASSIFICATION)"
+                elif path.startswith('/files'):
+                    category = "📁 ARCHIVOS (FILES)"
+                elif path.startswith('/jobs'):
+                    category = "⚙️ TRABAJOS (JOBS)"
+                elif path in ['/', '/health', '/status/modular']:
+                    category = "🏠 BÁSICOS (CORE)"
+                else:
+                    category = "🔧 OTROS"
+                
+                if category not in routes_by_category:
+                    routes_by_category[category] = []
+                
+                routes_by_category[category].append({
+                    'path': path,
+                    'methods': methods,
+                    'name': getattr(route, 'name', 'unnamed')
+                })
+    
+    # Mostrar rutas organizadas por categoría
+    for category, routes in sorted(routes_by_category.items()):
+        print(f"\n{category}")
+        print("-" * len(category))
+        
+        for route in sorted(routes, key=lambda x: x['path']):
+            methods_str = ', '.join(sorted(route['methods']))
+            print(f"  {methods_str:12} {route['path']}")
+    
+    print("\n" + "="*80)
+    print(f"📊 TOTAL DE ENDPOINTS: {sum(len(routes) for routes in routes_by_category.values())}")
+    print("🌐 Base URL: http://localhost:8000")
+    print("📚 Documentación: http://localhost:8000/docs")
+    print("🔄 Redoc: http://localhost:8000/redoc")
+    print("="*80 + "\n")
 
 # Eventos de startup/shutdown
 @app.on_event("startup")
@@ -140,6 +208,9 @@ async def startup_event():
         logger.info("🎯 API modular lista!")
     else:
         logger.warning("⚠️ API iniciada en modo básico - servicios no disponibles")
+    
+    # Mostrar todas las rutas disponibles
+    show_all_routes()
 
 @app.on_event("shutdown")
 async def shutdown_event():
@@ -158,7 +229,7 @@ async def root():
         "device": str(model_state['device']) if model_state['device'] else None,
         "architecture": "✅ Completamente modular" if routers_loaded and services_loaded else "⚠️ Modo básico",
         "services": ["MinIO", "Model", "ImageAnalysis", "SyntheticData"] if services_loaded else ["No disponibles"],
-        "routers": ["Classification", "Restoration", "SyntheticData", "Files", "Jobs"] if routers_loaded else ["No disponibles"]
+        "routers": ["Classification", "Restoration", "SyntheticData", "Files", "Jobs", "Training"] if routers_loaded else ["No disponibles"]
     }
 
 @app.get("/health")
@@ -197,7 +268,84 @@ async def modular_status():
             "restoration": "✅ /restore/* - Restauración de imágenes",
             "synthetic_data": "✅ /synthetic/* - Datos sintéticos", 
             "files": "✅ /files/* - Operaciones con archivos",
-            "jobs": "✅ /jobs/* - Manejo de trabajos"
+            "jobs": "✅ /jobs/* - Manejo de trabajos",
+            "training": "✅ /training/* - Entrenamiento de capas"
+        }
+    }
+
+@app.get("/routes")
+async def get_all_routes():
+    """Obtener todas las rutas disponibles en la API"""
+    routes_by_category = {}
+    
+    # Organizar rutas por categorías
+    for route in app.routes:
+        if hasattr(route, 'methods') and hasattr(route, 'path'):
+            methods = list(route.methods)
+            if 'HEAD' in methods:
+                methods.remove('HEAD')
+            if 'OPTIONS' in methods:
+                methods.remove('OPTIONS')
+                
+            if methods:  # Solo mostrar si tiene métodos HTTP válidos
+                path = route.path
+                
+                # Categorizar rutas
+                if path.startswith('/training'):
+                    category = "training"
+                elif path.startswith('/synthetic'):
+                    category = "synthetic_data"
+                elif path.startswith('/restore'):
+                    category = "restoration"
+                elif path.startswith('/classify'):
+                    category = "classification"
+                elif path.startswith('/files'):
+                    category = "files"
+                elif path.startswith('/jobs'):
+                    category = "jobs"
+                elif path in ['/', '/health', '/status/modular', '/routes']:
+                    category = "core"
+                else:
+                    category = "others"
+                
+                if category not in routes_by_category:
+                    routes_by_category[category] = []
+                
+                routes_by_category[category].append({
+                    'path': path,
+                    'methods': sorted(methods),
+                    'name': getattr(route, 'name', 'unnamed'),
+                    'summary': getattr(route, 'summary', None)
+                })
+    
+    # Ordenar rutas dentro de cada categoría
+    for category in routes_by_category:
+        routes_by_category[category] = sorted(routes_by_category[category], key=lambda x: x['path'])
+    
+    return {
+        "api_info": {
+            "title": API_CONFIG['title'],
+            "version": API_CONFIG['version'],
+            "base_url": "http://localhost:8000",
+            "documentation": "http://localhost:8000/docs",
+            "redoc": "http://localhost:8000/redoc"
+        },
+        "total_endpoints": sum(len(routes) for routes in routes_by_category.values()),
+        "categories": {
+            "training": "🎯 Entrenamiento de capas (Layer 1 y Layer 2)",
+            "synthetic_data": "🔄 Generación de datos sintéticos",
+            "restoration": "🛠️ Restauración de documentos",
+            "classification": "📊 Clasificación de documentos",
+            "files": "📁 Gestión de archivos en MinIO",
+            "jobs": "⚙️ Manejo de trabajos asíncronos",
+            "core": "🏠 Endpoints básicos del sistema"
+        },
+        "routes": routes_by_category,
+        "status": {
+            "services_loaded": services_loaded,
+            "routers_loaded": routers_loaded,
+            "model_loaded": model_state['loaded'],
+            "architecture": "modular" if routers_loaded and services_loaded else "basic"
         }
     }
 

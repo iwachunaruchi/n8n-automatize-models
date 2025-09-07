@@ -1,31 +1,25 @@
 """
 Router para operaciones con archivos
 """
-from fastapi import APIRouter, HTTPException, Response, UploadFile, File
+from fastapi import APIRouter, HTTPException, UploadFile, File, Query
 from fastapi.responses import StreamingResponse, JSONResponse
-import uuid
 import io
 import logging
-import sys
-import os
-
-# Agregar path para importaciones
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from typing import Optional
 
 try:
-    from services.image_analysis_service import image_analysis_service
-    from services.minio_service import minio_service
-    from config.settings import BUCKETS
+    from services.file_management_service import file_management_service
+    from config.constants import BUCKETS, RESPONSE_MESSAGES
 except ImportError as e:
     logging.warning(f"Error importando dependencias en files router: {e}")
-    image_analysis_service = None
-    minio_service = None
+    file_management_service = None
     BUCKETS = {
         'degraded': 'document-degraded',
         'clean': 'document-clean', 
         'restored': 'document-restored',
         'training': 'document-training'
     }
+    RESPONSE_MESSAGES = {"service_unavailable": "Servicio no disponible"}
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/files", tags=["Archivos"])
@@ -37,217 +31,206 @@ async def upload_file(
 ):
     """Subir archivo a bucket específico"""
     try:
+        # Verificar disponibilidad del servicio
+        if file_management_service is None:
+            raise HTTPException(
+                status_code=503, 
+                detail=RESPONSE_MESSAGES.get("service_unavailable", "Servicio no disponible")
+            )
+        
         # Validar bucket
         if bucket not in BUCKETS.values():
-            raise HTTPException(status_code=400, detail="Bucket no válido")
+            available_buckets = ", ".join(BUCKETS.values())
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Bucket no válido. Disponibles: {available_buckets}"
+            )
         
         # Leer archivo
         file_data = await file.read()
         
-        # Generar filename único
-        filename = f"{uuid.uuid4()}_{file.filename}"
+        # Subir usando el servicio
+        result = file_management_service.upload_file(
+            file_data=file_data,
+            bucket=bucket,
+            filename=file.filename,
+            validate_type=True
+        )
         
-        # Subir archivo
-        uploaded_filename = minio_service.upload_file(file_data, bucket, filename)
+        return JSONResponse(content=result)
         
-        return JSONResponse({
-            "status": "success",
-            "bucket": bucket,
-            "filename": uploaded_filename,
-            "original_filename": file.filename,
-            "size": len(file_data)
-        })
-        
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error subiendo archivo: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
 
 @router.get("/download/{bucket}/{filename}")
 async def download_file(bucket: str, filename: str):
     """Descargar archivo específico"""
     try:
+        # Verificar disponibilidad del servicio
+        if file_management_service is None:
+            raise HTTPException(
+                status_code=503, 
+                detail=RESPONSE_MESSAGES.get("service_unavailable", "Servicio no disponible")
+            )
+        
         # Validar bucket
         if bucket not in BUCKETS.values():
             raise HTTPException(status_code=400, detail="Bucket no válido")
         
-        # Descargar archivo
-        file_data = minio_service.download_file(bucket, filename)
+        # Descargar usando el servicio
+        file_data, content_type = file_management_service.download_file(bucket, filename)
         
         return StreamingResponse(
             io.BytesIO(file_data),
-            media_type="application/octet-stream",
+            media_type=content_type,
             headers={"Content-Disposition": f"attachment; filename={filename}"}
         )
         
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error descargando archivo: {e}")
         raise HTTPException(status_code=404, detail="Archivo no encontrado")
 
 @router.get("/list/{bucket}")
-async def list_files(bucket: str, prefix: str = ""):
+async def list_files(
+    bucket: str, 
+    prefix: Optional[str] = Query("", description="Prefijo para filtrar archivos"),
+    limit: Optional[int] = Query(None, description="Límite de archivos a retornar")
+):
     """Listar archivos en bucket"""
     try:
+        # Verificar disponibilidad del servicio
+        if file_management_service is None:
+            raise HTTPException(
+                status_code=503, 
+                detail=RESPONSE_MESSAGES.get("service_unavailable", "Servicio no disponible")
+            )
+        
         # Validar bucket
         if bucket not in BUCKETS.values():
             raise HTTPException(status_code=400, detail="Bucket no válido")
         
-        # Listar archivos
-        files = minio_service.list_files(bucket, prefix)
+        # Listar usando el servicio
+        result = file_management_service.list_files(
+            bucket=bucket,
+            prefix=prefix,
+            limit=limit
+        )
         
-        return JSONResponse({
-            "bucket": bucket,
-            "prefix": prefix,
-            "files": files,
-            "count": len(files)
-        })
+        return JSONResponse(content=result)
         
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error listando archivos: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
+
+@router.post("/analyze")
+async def analyze_file(file: UploadFile = File(...)):
+    """Analizar archivo sin subirlo"""
+    try:
+        # Verificar disponibilidad del servicio
+        if file_management_service is None:
+            raise HTTPException(
+                status_code=503, 
+                detail=RESPONSE_MESSAGES.get("service_unavailable", "Servicio no disponible")
+            )
+        
+        # Leer archivo
+        file_data = await file.read()
+        
+        # Analizar usando el servicio
+        result = file_management_service.analyze_file(file_data, file.filename)
+        
+        return JSONResponse(content=result)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error analizando archivo: {e}")
+        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
 
 @router.delete("/delete/{bucket}/{filename}")
 async def delete_file(bucket: str, filename: str):
     """Eliminar archivo específico"""
     try:
+        # Verificar disponibilidad del servicio
+        if file_management_service is None:
+            raise HTTPException(
+                status_code=503, 
+                detail=RESPONSE_MESSAGES.get("service_unavailable", "Servicio no disponible")
+            )
+        
         # Validar bucket
         if bucket not in BUCKETS.values():
             raise HTTPException(status_code=400, detail="Bucket no válido")
         
-        # Eliminar archivo
-        success = minio_service.delete_file(bucket, filename)
+        # Eliminar usando el servicio
+        result = file_management_service.delete_file(bucket, filename)
         
-        if success:
-            return JSONResponse({
-                "status": "success",
-                "message": f"Archivo {filename} eliminado de {bucket}"
-            })
-        else:
-            raise HTTPException(status_code=500, detail="Error eliminando archivo")
+        return JSONResponse(content=result)
         
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error eliminando archivo: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
 
-@router.post("/analyze")
-async def analyze_file(file: UploadFile = File(...)):
-    """Analizar calidad de imagen SIN subirla automáticamente"""
+@router.get("/stats")
+async def get_storage_stats():
+    """Obtener estadísticas de almacenamiento"""
     try:
-        if image_analysis_service is None:
-            raise HTTPException(status_code=503, detail="Servicio de análisis no disponible")
-            
-        # Validar archivo
-        if not file.content_type.startswith('image/'):
-            raise HTTPException(status_code=400, detail="Solo se permiten imágenes")
+        # Verificar disponibilidad del servicio
+        if file_management_service is None:
+            raise HTTPException(
+                status_code=503, 
+                detail=RESPONSE_MESSAGES.get("service_unavailable", "Servicio no disponible")
+            )
         
-        # Leer archivo
-        file_data = await file.read()
+        # Obtener estadísticas del servicio
+        stats = file_management_service.get_storage_stats()
         
-        # Analizar imagen con nuevo formato
-        analysis = image_analysis_service.analyze_image_quality(file_data)
-        classification_result = image_analysis_service.classify_document_type(file_data)
+        return JSONResponse(content=stats)
         
-        # Extraer información de clasificación
-        document_type = classification_result.get("type", "unknown")
-        confidence = classification_result.get("confidence", 0.0)
-        details = classification_result.get("details", {})
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error obteniendo estadísticas: {e}")
+        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
+
+@router.get("/info")
+async def get_files_info():
+    """Obtener información de configuración de archivos"""
+    try:
+        from config.constants import FILE_CONFIG
         
-        # Determinar bucket recomendado según clasificación
-        if document_type == "degraded":
-            bucket = BUCKETS['degraded']
-        elif document_type == "clean":
-            bucket = BUCKETS['clean']
-        else:
-            bucket = BUCKETS['degraded']  # fallback para unknown
-        
-        return JSONResponse({
-            "status": "success" if "error" not in details else "partial",
-            "filename": file.filename,
-            "classification": {
-                "type": document_type,
-                "confidence": confidence,
-                "details": details
+        info = {
+            "status": "active",
+            "service": "file_management_service",
+            "configuration": {
+                "max_file_size": FILE_CONFIG["MAX_SIZE"],
+                "allowed_extensions": FILE_CONFIG["ALLOWED_EXTENSIONS"],
+                "allowed_mime_types": FILE_CONFIG["ALLOWED_MIME_TYPES"],
+                "upload_timeout": FILE_CONFIG["UPLOAD_TIMEOUT"],
+                "available_buckets": BUCKETS
             },
-            "analysis": analysis,
-            "recommended_bucket": bucket,
-            "message": f"Documento clasificado como {document_type} (confianza: {confidence:.2f})"
-        })
+            "endpoints": [
+                {"path": "/files/upload", "method": "POST", "description": "Subir archivo a bucket"},
+                {"path": "/files/download/{bucket}/{filename}", "method": "GET", "description": "Descargar archivo"},
+                {"path": "/files/list/{bucket}", "method": "GET", "description": "Listar archivos en bucket"},
+                {"path": "/files/analyze", "method": "POST", "description": "Analizar archivo sin subirlo"},
+                {"path": "/files/delete/{bucket}/{filename}", "method": "DELETE", "description": "Eliminar archivo"},
+                {"path": "/files/stats", "method": "GET", "description": "Estadísticas de almacenamiento"},
+                {"path": "/files/info", "method": "GET", "description": "Información de configuración"}
+            ]
+        }
         
-    except MemoryError as e:
-        logger.error(f"Error de memoria analizando archivo: {e}")
-        return JSONResponse(
-            status_code=507,
-            content={
-                "status": "error",
-                "error": "Memoria insuficiente", 
-                "message": "La imagen es demasiado grande para procesar. Intente con una imagen de menor resolución.",
-                "filename": file.filename,
-                "details": str(e)
-            }
-        )
+        return JSONResponse(content=info)
+        
     except Exception as e:
-        logger.error(f"Error analizando archivo: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-    
-@router.get("/view/{bucket}/{filename}")
-async def view_file(bucket: str, filename: str):
-    """Ver archivo directamente en el navegador (sin descarga)"""
-    try:
-        # Validar bucket
-        if bucket not in BUCKETS.values():
-            raise HTTPException(status_code=400, detail=f"Bucket inválido: {bucket}")
-        
-        # Descargar archivo desde MinIO
-        file_data = minio_service.download_file(bucket, filename)
-        
-        # Detectar tipo de contenido basado en extensión
-        content_type = "image/png"
-        if filename.lower().endswith(('.jpg', '.jpeg')):
-            content_type = "image/jpeg"
-        elif filename.lower().endswith('.gif'):
-            content_type = "image/gif"
-        elif filename.lower().endswith('.webp'):
-            content_type = "image/webp"
-        
-        # Retornar con headers para visualización directa
-        return Response(
-            content=file_data,
-            media_type=content_type,
-            headers={
-                "Content-Disposition": "inline; filename=" + filename,  # ✅ 'inline' = visualizar
-                "Cache-Control": "public, max-age=3600"  # Cache por 1 hora
-            }
-        )
-        
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="Archivo no encontrado")
-    except Exception as e:
-        logger.error(f"Error visualizando archivo {bucket}/{filename}: {e}")
-        raise HTTPException(status_code=500, detail="Error accediendo al archivo")
-
-
-@router.get("/download/{bucket}/{filename}")
-async def download_file(bucket: str, filename: str):
-    """Descargar archivo específico (fuerza descarga)"""
-    try:
-        # Validar bucket
-        if bucket not in BUCKETS.values():
-            raise HTTPException(status_code=400, detail=f"Bucket inválido: {bucket}")
-        
-        # Descargar archivo desde MinIO
-        file_data = minio_service.download_file(bucket, filename)
-        
-        # Retornar con headers para descarga forzada
-        return Response(
-            content=file_data,
-            media_type="application/octet-stream",
-            headers={
-                "Content-Disposition": "attachment; filename=" + filename  # ✅ 'attachment' = descargar
-            }
-        )
-        
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="Archivo no encontrado")
-    except Exception as e:
-        logger.error(f"Error descargando archivo {bucket}/{filename}: {e}")
-        raise HTTPException(status_code=500, detail="Error accediendo al archivo")
-
+        logger.error(f"Error obteniendo información: {e}")
+        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")

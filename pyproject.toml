@@ -1,0 +1,137 @@
+[tool.poetry]
+name = "n8n-automatize-models"
+version = "0.1.0"
+description = "Sistema de automatización de restauración de documentos con n8n"
+authors = ["iwachunaruchi"]
+readme = "README.md"
+package-mode = false
+
+[tool.poetry.dependencies]
+python = "^3.11"
+
+# Core ML/DL Framework
+torch = ">=2.1.0"
+torchvision = ">=0.16.0"
+torchaudio = ">=0.9.0"
+
+# Computer Vision & Image Processing
+opencv-python = "^4.8.1"
+albumentations = "^1.3.1"
+scikit-image = "*"
+pillow = "^10.1.0"
+
+# Data Science & Utils
+numpy = "^1.24.3"
+matplotlib = "*"
+tqdm = "*"
+pyyaml = "*"
+scikit-learn = ">=1.0.0"
+
+# API Framework
+fastapi = "^0.104.1"
+uvicorn = {extras = ["standard"], version = "^0.24.0"}
+python-multipart = "^0.0.6"
+aiofiles = "^23.2.1"
+
+# Cloud Storage
+boto3 = "^1.34.0"
+botocore = "^1.34.0"
+
+# Data Models & Validation
+pydantic = "^2.5.0"
+
+# Authentication & Security
+python-jose = {extras = ["cryptography"], version = "^3.3.0"}
+passlib = {extras = ["bcrypt"], version = "^1.7.4"}
+
+# Environment & Config
+python-dotenv = "^1.0.0"
+
+# HTTP Client
+requests = "^2.31.0"
+
+# Monitoring & Logging
+prometheus-client = "^0.19.0"
+structlog = "^23.2.0"
+
+# ML Enhancement Libraries
+timm = "*"
+basicsr = "*"
+facexlib = "*"
+gfpgan = "*"
+realesrgan = "*"
+
+# OCR
+pytesseract = "*"
+
+# System Monitoring
+psutil = "*"
+
+# Deep Learning Visualization
+tensorboard = "*"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.0.0"
+pytest-asyncio = "^0.21.0"
+black = "^23.0.0"
+isort = "^5.12.0"
+flake8 = "^6.0.0"
+mypy = "^1.0.0"
+pre-commit = "^3.0.0"
+
+[tool.poetry.group.training.dependencies]
+# Dependencias específicas para entrenamiento
+wandb = "^0.16.0"
+tensorboard = "*"
+
+[tool.poetry.scripts]
+start-api = "scripts.start_api:main"
+setup-dev = "scripts.setup_dev:main"
+manage-deps = "scripts.manage_deps:main"
+validate-setup = "scripts.validate_setup:main"
+train-layer1 = "layers.train-layers.train_layer_1:main"
+train-layer2 = "layers.train-layers.train_layer_2:main"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.black]
+line-length = 88
+target-version = ['py311']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+  | __pycache__
+)/
+'''
+
+[tool.isort]
+profile = "black"
+multi_line_output = 3
+line_length = 88
+known_first_party = ["api", "src", "layers"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
+asyncio_mode = "auto"

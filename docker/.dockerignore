@@ -1,0 +1,109 @@
+# Archivos y directorios a ignorar en Docker build
+
+# Python cache y builds
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+build/
+dist/
+
+# Entornos virtuales
+env/
+venv/
+venv_3.11/
+.venv/
+
+# Control de versiones
+.git/
+.gitignore
+
+# Modelos grandes (se descargan en runtime)
+models/
+*.pth
+*.pt
+*.onnx
+*.pkl
+
+# Datos y outputs (se generan en runtime)
+data/
+outputs/
+*.png
+*.jpg
+*.jpeg
+*.tiff
+*.bmp
+
+# Testing y coverage
+.pytest_cache/
+.coverage
+.nyc_output/
+tests/
+
+# Scripts de prueba y desarrollo (no necesarios en producción)
+test_*.py
+demo_*.py
+quick_*.py
+use_layer2_model_from_minio.py
+*_test.py
+
+# Node.js (si aplica)
+node_modules/
+npm-debug.log*
+.npm
+
+# Sistema
+.DS_Store
+.vscode/
+*.log
+*.tmp
+*.temp
+temp/
+tmp/
+
+# Poetry específico
+poetry.lock
+.venv/
+
+# Docker
+Dockerfile*
+docker-compose*.yml
+minio-setup*.sh
+minio-setup*.py
+
+# Documentación generada
+*.md
+!README.md
+
+# Archivos de configuración locales
+.env
+.env.local
+.env.*.local
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# Scripts de desarrollo
+scripts/
+docker-manager.*
+
+# Documentación
+README.md
+POETRY_GUIDE.md
+*.md
+
+# Configuración local
+.env
+.env.local
+
+# Legacy files no necesarios en container
+legacy/
+requirements.txt
+api/requirements.txt
+
+# Tests (para imagen de producción)
+tests/
+test_*.py
+*_test.py
