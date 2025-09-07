@@ -191,12 +191,12 @@ services:
       minio:
         condition: service_healthy
     volumes:
-      - ./outputs:/app/outputs
-      - ./models:/app/models
-      - ./src:/app/src           # Hot reload para src
-      - ./api:/app/api           # Hot reload para API
-      - ./config:/app/config     # Hot reload para config
-      - ./scripts:/app/scripts   # Hot reload para scripts
+      - ../outputs:/app/outputs
+      - ../models:/app/models
+      - ../src:/app/src         
+      - ../api:/app/api          
+      - ../config:/app/config     
+      - ../scripts:/app/scripts   
       - api_logs:/app/logs
     networks:
       - doc-restoration-network
