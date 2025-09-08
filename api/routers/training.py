@@ -84,7 +84,7 @@ async def start_layer1_evaluation(
             job_manager.enqueue_job(
                 'workers.tasks.training_tasks.layer1_training_job',
                 job_kwargs=job_data,
-                queue='default'
+                priority='default'
             )
             logger.info(f"🔍 Layer1 evaluation job enviado a RQ: {job_id}")
         else:
@@ -158,7 +158,7 @@ async def start_layer2_training(
             job_manager.enqueue_job(
                 'workers.tasks.training_tasks.layer2_training_job',
                 job_kwargs=job_data,
-                queue='default'
+                priority='default'
             )
             logger.info(f"🧠 Training job enviado a RQ: {job_id}")
         else:
@@ -270,7 +270,7 @@ async def list_training_jobs():
             raise HTTPException(status_code=503, detail="Sistema RQ no disponible")
         
         # Obtener jobs de RQ system
-        jobs_data = job_manager.list_jobs(queue="default")
+        jobs_data = job_manager.list_jobs(queue_name="default")
         
         # Filtrar solo jobs de training
         training_jobs = []

@@ -155,7 +155,7 @@ async def generate_training_pairs(
         job_id = job_manager.enqueue_job(
             'workers.tasks.synthetic_data_tasks.generate_synthetic_data_job',
             job_kwargs=job_data,
-            queue='default'
+            priority='default'
         )
         
         return JSONResponse({
@@ -205,7 +205,7 @@ async def augment_dataset(
         job_id = job_manager.enqueue_job(
             'workers.tasks.synthetic_data_tasks.augment_dataset_job',
             job_kwargs=job_data,
-            queue='default'
+            priority='default'
         )
         
         return JSONResponse({

@@ -14,17 +14,17 @@ from ..utils.rq_utils import RQJobProgressTracker, setup_job_environment
 
 logger = logging.getLogger(__name__)
 
-def generate_synthetic_data_job(num_pairs: int = 100,
-                               degradation_types: List[str] = None,
-                               output_bucket: str = "document-training",
+def generate_synthetic_data_job(clean_bucket: str,
+                               requested_count: int,
+                               job_type: str = "training_pairs_generation",
                                **kwargs) -> Dict[str, Any]:
     """
     🎨 Job de generación de datos sintéticos
     
     Args:
-        num_pairs: Número de pares de imágenes a generar
-        degradation_types: Tipos de degradación a aplicar
-        output_bucket: Bucket de destino
+        clean_bucket: Bucket con imágenes limpias
+        requested_count: Número de pares a generar
+        job_type: Tipo de trabajo
         **kwargs: Parámetros adicionales de RQ
     
     Returns:
@@ -33,10 +33,7 @@ def generate_synthetic_data_job(num_pairs: int = 100,
     setup_job_environment()
     tracker = RQJobProgressTracker()
     
-    if degradation_types is None:
-        degradation_types = ["blur", "noise", "compression", "fading"]
-    
-    logger.info(f"🎨 Iniciando generación de datos sintéticos: {num_pairs} pares")
+    logger.info(f"🎨 Iniciando generación de datos sintéticos: {requested_count} pares desde {clean_bucket}")
     
     try:
         tracker.update_progress(5, "Preparando generación de datos sintéticos...")
@@ -44,25 +41,12 @@ def generate_synthetic_data_job(num_pairs: int = 100,
         # Importar servicio de datos sintéticos
         from api.services.synthetic_data_service import synthetic_data_service
         
-        generation_params = {
-            'num_pairs': num_pairs,
-            'degradation_types': degradation_types,
-            'output_bucket': output_bucket
-        }
-        
         tracker.update_progress(10, "Configuración completada, iniciando generación...")
         
-        # Callback de progreso para la generación
-        def generation_progress_callback(current: int, total: int, message: str):
-            progress = int(10 + ((current / total) * 80))
-            tracker.update_progress(progress, f"Generando: {current}/{total} - {message}")
-        
-        # Ejecutar generación de datos sintéticos
+        # Ejecutar generación de datos sintéticos con los parámetros correctos
         generation_result = synthetic_data_service.generate_training_pairs(
-            num_pairs=num_pairs,
-            degradation_types=degradation_types,
-            output_bucket=output_bucket,
-            progress_callback=generation_progress_callback
+            clean_bucket=clean_bucket,
+            count=requested_count
         )
         
         tracker.update_progress(95, "Finalizando y guardando metadatos...")
@@ -71,17 +55,17 @@ def generate_synthetic_data_job(num_pairs: int = 100,
         final_result = {
             'status': 'completed',
             'generation_result': generation_result,
-            'parameters': generation_params,
+            'clean_bucket': clean_bucket,
+            'requested_count': requested_count,
             'completed_at': datetime.now().isoformat(),
-            'job_type': 'synthetic_data_generation',
-            'generated_pairs': num_pairs,
-            'degradation_types': degradation_types
+            'job_type': job_type,
+            'generated_pairs': requested_count
         }
         
         tracker.set_result(final_result)
-        tracker.update_progress(100, f"Generación de {num_pairs} pares completada")
+        tracker.update_progress(100, f"Generación de {requested_count} pares completada")
         
-        logger.info(f"✅ Generación de datos sintéticos completada: {num_pairs} pares")
+        logger.info(f"✅ Generación de datos sintéticos completada: {requested_count} pares")
         return final_result
         
     except Exception as e:
@@ -89,17 +73,17 @@ def generate_synthetic_data_job(num_pairs: int = 100,
         logger.error(f"❌ Error en generación de datos sintéticos: {e}")
         raise
 
-def augment_dataset_job(source_bucket: str = "document-clean",
-                       output_bucket: str = "document-training",
-                       augmentation_factor: int = 3,
+def augment_dataset_job(bucket: str,
+                       target_count: int,
+                       job_type: str = "dataset_augmentation",
                        **kwargs) -> Dict[str, Any]:
     """
     📈 Job de aumento de dataset
     
     Args:
-        source_bucket: Bucket fuente con imágenes limpias
-        output_bucket: Bucket de destino
-        augmentation_factor: Factor de aumento (ej: 3 = 3x más imágenes)
+        bucket: Bucket con imágenes a aumentar
+        target_count: Número objetivo de imágenes
+        job_type: Tipo de trabajo
         **kwargs: Parámetros adicionales de RQ
     
     Returns:
@@ -108,68 +92,37 @@ def augment_dataset_job(source_bucket: str = "document-clean",
     setup_job_environment()
     tracker = RQJobProgressTracker()
     
-    logger.info(f"📈 Iniciando aumento de dataset: factor {augmentation_factor}x")
+    logger.info(f"📈 Iniciando aumento de dataset: objetivo {target_count} imágenes desde {bucket}")
     
     try:
         tracker.update_progress(5, "Preparando aumento de dataset...")
         
-        # Importar servicios necesarios
+        # Importar servicio de datos sintéticos
         from api.services.synthetic_data_service import synthetic_data_service
-        from api.services.minio_service import minio_service
         
-        # Listar imágenes fuente
-        tracker.update_progress(10, "Obteniendo lista de imágenes fuente...")
-        source_images = minio_service.list_files(source_bucket)
+        tracker.update_progress(10, "Configuración completada, iniciando augmentación...")
         
-        total_images = len(source_images)
-        total_to_generate = total_images * augmentation_factor
+        # Ejecutar augmentación usando el servicio
+        augmentation_result = synthetic_data_service.augment_dataset(
+            bucket=bucket,
+            target_count=target_count
+        )
         
-        augmentation_params = {
-            'source_bucket': source_bucket,
-            'output_bucket': output_bucket,
-            'augmentation_factor': augmentation_factor,
-            'total_source_images': total_images,
-            'total_to_generate': total_to_generate
-        }
-        
-        tracker.update_progress(15, f"Procesando {total_images} imágenes fuente...")
-        
-        generated_count = 0
-        
-        for i, image_name in enumerate(source_images):
-            # Generar variaciones aumentadas para cada imagen
-            for aug_variant in range(augmentation_factor):
-                # Callback de progreso
-                progress = int(15 + ((generated_count / total_to_generate) * 75))
-                tracker.update_progress(
-                    progress, 
-                    f"Augmentando {image_name} (variante {aug_variant+1}/{augmentation_factor})"
-                )
-                
-                # Aplicar aumentos (rotación, escala, brillo, etc.)
-                augmented_result = synthetic_data_service.apply_augmentation(
-                    source_bucket=source_bucket,
-                    image_name=image_name,
-                    output_bucket=output_bucket,
-                    variant_id=aug_variant
-                )
-                
-                generated_count += 1
+        tracker.update_progress(95, "Finalizando augmentación...")
         
         final_result = {
             'status': 'completed',
-            'parameters': augmentation_params,
-            'source_images_count': total_images,
-            'generated_images_count': generated_count,
-            'augmentation_factor': augmentation_factor,
+            'augmentation_result': augmentation_result,
+            'bucket': bucket,
+            'target_count': target_count,
             'completed_at': datetime.now().isoformat(),
-            'job_type': 'dataset_augmentation'
+            'job_type': job_type
         }
         
         tracker.set_result(final_result)
-        tracker.update_progress(100, f"Aumento de dataset completado: {generated_count} imágenes")
+        tracker.update_progress(100, f"Aumento de dataset completado: {target_count} objetivo")
         
-        logger.info(f"✅ Aumento de dataset completado: {generated_count} imágenes generadas")
+        logger.info(f"✅ Aumento de dataset completado para bucket {bucket}")
         return final_result
         
     except Exception as e:
