@@ -35,7 +35,7 @@ RUN pip install poetry==$POETRY_VERSION
 WORKDIR /app
 
 # Copiar archivos de Poetry primero (para cache de Docker)
-COPY pyproject.toml poetry.lock* ./
+COPY pyproject.toml ./
 
 # Configurar Poetry y instalar TODAS las dependencias (dev + prod)
 RUN poetry config virtualenvs.create false \

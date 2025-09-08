@@ -24,6 +24,17 @@ except ImportError as e:
     FILE_CONFIG = {"MAX_SIZE": 50 * 1024 * 1024}
 
 logger = logging.getLogger(__name__)
+
+# Importar sistema RQ
+try:
+    from rq_job_system import get_job_queue_manager
+    RQ_AVAILABLE = True
+    job_manager = get_job_queue_manager()
+except ImportError as e:
+    logger.error(f"Error importando RQ system: {e}")
+    RQ_AVAILABLE = False
+    job_manager = None
+
 router = APIRouter(prefix="/restore", tags=["Restauración"])
 
 @router.post("/document")

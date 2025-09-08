@@ -22,6 +22,10 @@ python-dotenv==1.0.0
 aiofiles==23.2.1
 requests==2.31.0
 
+# Job Queue System
+redis==5.0.1
+rq==1.15.1
+
 # Monitoreo y logging
 prometheus-client==0.19.0
 structlog==23.2.0

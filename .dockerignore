@@ -18,6 +18,21 @@ venv_3.11/
 
 # Control de versiones
 .git/
+
+# Poetry files que pueden causar conflictos con cache mounts
+poetry.lock
+
+# Docker files que no van en el container
+docker/
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# Archivos temporales y outputs
+outputs/
+temp_models/
+models/
+logs/
 .gitignore
 
 # Modelos grandes (se descargan en runtime)
@@ -67,13 +82,13 @@ tmp/
 poetry.lock
 .venv/
 
-# Docker files (no necesarios dentro del container)
-docker/
+# Docker
 Dockerfile*
 docker-compose*.yml
-.dockerignore
+minio-setup*.sh
+minio-setup*.py
 
-# Documentación (excepto README principal)
+# Documentación generada
 *.md
 !README.md
 
@@ -81,7 +96,29 @@ docker-compose*.yml
 .env
 .env.local
 .env.*.local
+Dockerfile*
+docker-compose*.yml
+.dockerignore
 
-# Scripts de desarrollo locales
-scripts/investigations/
-scripts/model-management/
+# Scripts de desarrollo
+scripts/
+docker-manager.*
+
+# Documentación
+README.md
+POETRY_GUIDE.md
+*.md
+
+# Configuración local
+.env
+.env.local
+
+# Legacy files no necesarios en container
+legacy/
+requirements.txt
+api/requirements.txt
+
+# Tests (para imagen de producción)
+tests/
+test_*.py
+*_test.py

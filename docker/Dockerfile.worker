@@ -1,4 +1,4 @@
-# Dockerfile.dev - Para desarrollo con hot reload
+# Dockerfile para Worker Modular con Hot Reload
 FROM python:3.11-slim AS base
 
 # Configurar variables de entorno para Poetry
@@ -7,6 +7,10 @@ ENV POETRY_HOME="/opt/poetry" \
     POETRY_VENV_IN_PROJECT=1 \
     POETRY_NO_INTERACTION=1 \
     POETRY_CACHE_DIR=/tmp/poetry_cache
+
+# Variables de entorno para desarrollo/debug
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
 
 # Instalar dependencias del sistema
 RUN apt-get update && apt-get install -y \
@@ -21,6 +25,7 @@ RUN apt-get update && apt-get install -y \
     ffmpeg \
     git \
     build-essential \
+    procps \
     && rm -rf /var/lib/apt/lists/*
 
 # Instalar Poetry
@@ -30,9 +35,9 @@ RUN pip install poetry==$POETRY_VERSION
 WORKDIR /app
 
 # Copiar archivos de Poetry primero (para cache de Docker)
-COPY pyproject.toml poetry.lock* ./
+COPY pyproject.toml ./
 
-# Configurar Poetry y instalar dependencias (incluyendo dev)
+# Configurar Poetry y instalar TODAS las dependencias (dev + prod)
 RUN poetry config virtualenvs.create false \
     && poetry install --no-root \
     && rm -rf $POETRY_CACHE_DIR
@@ -41,22 +46,19 @@ RUN poetry config virtualenvs.create false \
 COPY . .
 
 # Crear directorios necesarios
-RUN mkdir -p outputs/checkpoints models/pretrained logs
+RUN mkdir -p outputs/checkpoints models/pretrained logs workers/temp
 
-# Crear usuario no-root para seguridad (pero con permisos para desarrollo)
-RUN useradd --create-home --shell /bin/bash app \
-    && chown -R app:app /app
-USER app
+# Crear usuario no-root para seguridad
+RUN useradd --create-home --shell /bin/bash worker \
+    && chown -R worker:worker /app
+USER worker
 
-# Exponer puerto
-EXPOSE 8000
+# Variables de entorno por defecto
+ENV PYTHONPATH=/app
 
-# Variables de entorno para desarrollo
-ENV PYTHONPATH=/app \
-    API_HOST=0.0.0.0 \
-    API_PORT=8000 \
-    ENVIRONMENT=development \
-    DEBUG=true
+# Healthcheck para el worker
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD python -c "import os; exit(0 if os.path.exists('/app/workers/temp/worker_health.txt') else 1)"
 
-# Comando para desarrollo con hot reload
-CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+# Comando por defecto: Worker RQ profesional
+CMD ["python", "workers/rq_worker.py"]

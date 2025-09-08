@@ -9,8 +9,11 @@ from fastapi.responses import JSONResponse
 import logging
 import sys
 import os
+import uuid
 from typing import Optional
-from pydantic import BaseModel
+
+# Importar modelos Pydantic desde la carpeta models
+from models.schemas import Layer2TrainingRequest
 
 # Configurar logger
 logger = logging.getLogger(__name__)
@@ -18,16 +21,25 @@ logger = logging.getLogger(__name__)
 # Agregar path para importaciones
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# Importar sistema RQ
+try:
+    from rq_job_system import get_job_queue_manager
+    RQ_AVAILABLE = True
+    job_manager = get_job_queue_manager()
+except ImportError as e:
+    logger.error(f"Error importando RQ system: {e}")
+    RQ_AVAILABLE = False
+    job_manager = None
 
-class Layer2TrainingRequest(BaseModel):
-    """Modelo para request de entrenamiento Layer 2"""
-    num_epochs: int = 10
-    max_pairs: int = 100
-    batch_size: int = 2
-    use_training_bucket: bool = True
-    use_finetuning: bool = True
-    freeze_backbone: bool = False
-    finetuning_lr_factor: float = 0.1
+from datetime import datetime
+
+def create_job_id(job_type: str) -> str:
+    """Crear ID único para job"""
+    from datetime import datetime
+    import uuid
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    short_uuid = str(uuid.uuid4())[:8]
+    return f"{job_type}_{timestamp}_{short_uuid}"
 
 # Importar servicio de entrenamiento
 try:
@@ -54,12 +66,30 @@ async def start_layer1_evaluation(
         if not TRAINING_SERVICE_AVAILABLE:
             raise HTTPException(status_code=503, detail="Servicio de entrenamiento no disponible")
         
-        # Crear trabajo usando el servicio
-        job_id = training_service.create_job("layer1_evaluation", max_images=max_images)
+        # Crear trabajo usando la cola compartida
+        job_id = create_job_id("layer1_evaluation")
         
-        # Ejecutar en background usando asyncio.create_task() para verdadero paralelismo
-        import asyncio
-        asyncio.create_task(training_service.start_layer1_evaluation(job_id, max_images))
+        job_data = {
+            "job_id": job_id,
+            "job_type": "layer1_evaluation", 
+            "parameters": {
+                "max_images": max_images
+            },
+            "created_at": datetime.now().isoformat(),
+            "status": "queued"
+        }
+        
+        # Enviar job a RQ para procesamiento por worker
+        if RQ_AVAILABLE:
+            job_manager.enqueue_job(
+                'workers.tasks.training_tasks.layer1_training_job',
+                job_kwargs=job_data,
+                priority='default'
+            )
+            logger.info(f"🔍 Layer1 evaluation job enviado a RQ: {job_id}")
+        else:
+            logger.error("RQ no disponible - job no encolado")
+            raise HTTPException(status_code=503, detail="Sistema de jobs no disponible")
         
         return JSONResponse({
             "status": "success",
@@ -105,31 +135,35 @@ async def start_layer2_training(
             raise HTTPException(status_code=400, detail=f"Parámetros inválidos: {', '.join(validation_errors)}")
         
         # Crear trabajo usando el servicio
-        job_id = training_service.create_job(
-            "layer2_training",
-            num_epochs=request.num_epochs,
-            max_pairs=request.max_pairs,
-            batch_size=request.batch_size,
-            use_training_bucket=request.use_training_bucket,
-            use_finetuning=request.use_finetuning,
-            freeze_backbone=request.freeze_backbone,
-            finetuning_lr_factor=request.finetuning_lr_factor
-        )
+        job_id = create_job_id("layer2_training")
         
-        # Ejecutar en background usando asyncio.create_task() para verdadero paralelismo
-        import asyncio
-        asyncio.create_task(
-            training_service.start_layer2_training(
-                job_id=job_id,
-                num_epochs=request.num_epochs,
-                max_pairs=request.max_pairs,
-                batch_size=request.batch_size,
-                use_training_bucket=request.use_training_bucket,
-                use_finetuning=request.use_finetuning,
-                freeze_backbone=request.freeze_backbone,
-                finetuning_lr_factor=request.finetuning_lr_factor
+        job_data = {
+            "job_id": job_id,
+            "job_type": "layer2_training",
+            "parameters": {
+                "num_epochs": request.num_epochs,
+                "max_pairs": request.max_pairs,
+                "batch_size": request.batch_size,
+                "use_training_bucket": request.use_training_bucket,
+                "use_finetuning": request.use_finetuning,
+                "freeze_backbone": request.freeze_backbone,
+                "finetuning_lr_factor": request.finetuning_lr_factor
+            },
+            "created_at": datetime.now().isoformat(),
+            "status": "queued"
+        }
+        
+        # Enviar job a RQ para procesamiento por worker
+        if RQ_AVAILABLE:
+            job_manager.enqueue_job(
+                'workers.tasks.training_tasks.layer2_training_job',
+                job_kwargs=job_data,
+                priority='default'
             )
-        )
+            logger.info(f"🧠 Training job enviado a RQ: {job_id}")
+        else:
+            logger.error("RQ no disponible - job no encolado")
+            raise HTTPException(status_code=503, detail="Sistema de jobs no disponible")
         
         return JSONResponse({
             "status": "success",
@@ -161,6 +195,29 @@ async def get_training_status(job_id: str):
         if not TRAINING_SERVICE_AVAILABLE:
             raise HTTPException(status_code=503, detail="Servicio de entrenamiento no disponible")
         
+        # Primero intentar obtener del sistema RQ
+        if RQ_AVAILABLE:
+            job_status = job_manager.get_job_status(job_id)
+        else:
+            job_status = None
+        
+        if job_status:
+            # Job encontrado en RQ
+            return JSONResponse({
+                "job_id": job_id,
+                "type": job_status.get("job_type", "unknown"),
+                "status": job_status.get("status", "unknown"),
+                "progress": job_status.get("progress", 0),
+                "created_at": job_status.get("created_at"),
+                "started_at": job_status.get("started_at"),
+                "completed_at": job_status.get("completed_at"),
+                "error": job_status.get("error"),
+                "results": job_status.get("results"),
+                "parameters": job_status.get("parameters", {}),
+                "source": "rq_system"
+            })
+        
+        # Si no está en cola compartida, buscar en sistema tradicional
         job = training_service.get_job_status(job_id)
         
         if not job:
@@ -169,7 +226,6 @@ async def get_training_status(job_id: str):
         # Calcular duración si está en progreso
         duration = None
         if job["status"] in ["running", "completed", "failed"]:
-            from datetime import datetime
             start_time = datetime.fromisoformat(job["start_time"])
             current_time = datetime.now()
             duration = str(current_time - start_time)
@@ -197,6 +253,7 @@ async def get_training_status(job_id: str):
                 "batch_size": params.get("batch_size")
             }
         
+        response["source"] = "training_service"
         return JSONResponse(response)
         
     except HTTPException:
@@ -207,20 +264,38 @@ async def get_training_status(job_id: str):
 
 @router.get("/jobs")
 async def list_training_jobs():
-    """Listar todos los trabajos de entrenamiento"""
+    """Listar todos los trabajos de entrenamiento - MIGRADO A RQ"""
     try:
-        if not TRAINING_SERVICE_AVAILABLE:
-            raise HTTPException(status_code=503, detail="Servicio de entrenamiento no disponible")
+        if not RQ_AVAILABLE:
+            raise HTTPException(status_code=503, detail="Sistema RQ no disponible")
         
-        jobs_list = training_service.list_training_jobs()
+        # Obtener jobs de RQ system
+        jobs_data = job_manager.list_jobs(queue_name="default")
+        
+        # Filtrar solo jobs de training
+        training_jobs = []
+        for job in jobs_data.get('jobs', []):
+            if 'training' in job.get('function_name', '').lower():
+                training_jobs.append({
+                    "job_id": job.get('id'),
+                    "job_type": job.get('function_name', '').split('.')[-1],
+                    "status": job.get('status'),
+                    "progress": job.get('progress', 0),
+                    "created_at": job.get('created_at'),
+                    "started_at": job.get('started_at'),
+                    "completed_at": job.get('completed_at'),
+                    "error": job.get('failure_reason'),
+                    "source": "rq_system"
+                })
         
         return JSONResponse({
-            "total_jobs": len(jobs_list),
-            "jobs": jobs_list
+            "total_jobs": len(training_jobs),
+            "jobs": training_jobs,
+            "system": "rq"
         })
         
     except Exception as e:
-        logger.error(f"Error listando trabajos: {e}")
+        logger.error(f"Error listando trabajos RQ: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/layer2/prepare-data")
@@ -290,35 +365,22 @@ async def get_layer2_data_status():
 
 @router.delete("/jobs/{job_id}")
 async def cancel_training_job(job_id: str):
-    """Cancelar trabajo de entrenamiento"""
+    """Cancelar trabajo de entrenamiento - MIGRADO A RQ"""
     try:
-        if not TRAINING_SERVICE_AVAILABLE:
-            raise HTTPException(status_code=503, detail="Servicio de entrenamiento no disponible")
+        if not RQ_AVAILABLE:
+            raise HTTPException(status_code=503, detail="Sistema RQ no disponible")
         
-        job = training_service.get_job_status(job_id)
+        # Intentar cancelar job en RQ
+        result = job_manager.cancel_job(job_id)
         
-        if not job:
+        if not result:
             raise HTTPException(status_code=404, detail="Trabajo no encontrado")
-        
-        if job["status"] == "completed":
-            return JSONResponse({
-                "status": "info",
-                "message": "El trabajo ya está completado",
-                "job_id": job_id
-            })
-        
-        # Marcar como cancelado
-        from datetime import datetime
-        training_service.update_job_status(
-            job_id, 
-            "cancelled",
-            end_time=datetime.now().isoformat()
-        )
         
         return JSONResponse({
             "status": "success",
-            "message": "Trabajo cancelado",
-            "job_id": job_id
+            "message": "Trabajo cancelado exitosamente",
+            "job_id": job_id,
+            "system": "rq"
         })
         
     except HTTPException:

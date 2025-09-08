@@ -1,7 +1,7 @@
-0#!/usr/bin/env python3
+#!/usr/bin/env python3
 """
 API REST para Restauración de Documentos - VERSIÓN MODULAR
-Integración con n8n y MinIO para automatización
+Integración con n8n y MinIO para automatización + Redis Queue (RQ) para Jobs
 """
 
 import sys
@@ -10,7 +10,9 @@ from pathlib import Path
 
 # Agregar el directorio actual al PYTHONPATH para importaciones
 current_dir = Path(__file__).parent
+project_root = current_dir.parent
 sys.path.insert(0, str(current_dir))
+sys.path.insert(0, str(project_root))
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -55,7 +57,7 @@ try:
     from routers.restoration import router as restoration_router
     from routers.synthetic_data import router as synthetic_data_router
     from routers.files import router as files_router
-    from routers.jobs import router as jobs_router
+    from routers.jobs_rq import router as jobs_router  # Corregido: jobs_rq
     from routers.training import router as training_router
     from routers.models import router as models_router
     logger.info("✅ Routers importados exitosamente")

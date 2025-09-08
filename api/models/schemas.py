@@ -2,7 +2,7 @@
 Modelos Pydantic para la API
 """
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from datetime import datetime
 
 class ProcessingJob(BaseModel):
@@ -72,3 +72,26 @@ class DatasetStats(BaseModel):
     total_size_mb: Optional[float] = None
     files: Optional[List[str]] = None
     error: Optional[str] = None
+
+class Layer2TrainingRequest(BaseModel):
+    """Modelo para request de entrenamiento Layer 2"""
+    num_epochs: int = 10
+    max_pairs: int = 100
+    batch_size: int = 2
+    use_training_bucket: bool = True
+    use_finetuning: bool = True
+    freeze_backbone: bool = False
+    finetuning_lr_factor: float = 0.1
+
+# Modelos para cola compartida de jobs
+class JobRequest(BaseModel):
+    """Modelo para request genérico de job"""
+    job_type: str
+    parameters: Dict[str, Any] = {}
+    priority: int = 1
+
+class RestorationRequest(BaseModel):
+    """Modelo para request de restauración por lotes"""
+    file_count: int = 10
+    model_type: str = "layer2"
+    bucket: str = "document-degraded"
