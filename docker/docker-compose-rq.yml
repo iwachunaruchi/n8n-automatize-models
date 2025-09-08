@@ -189,6 +189,12 @@ services:
     networks:
       - doc-restoration-network
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
 
   # RQ Worker - Worker profesional usando Redis Queue
   rq-worker:
@@ -235,7 +241,7 @@ services:
     networks:
       - doc-restoration-network
     restart: unless-stopped
-    command: ["python", "-m", "workers.rq_worker"]
+    command: ["python", "workers/rq_worker.py"]
 
   # RQ Dashboard - Monitoreo de jobs
   rq-dashboard:

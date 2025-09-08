@@ -50,6 +50,10 @@ python-dotenv = "^1.0.0"
 # HTTP Client
 requests = "^2.31.0"
 
+# Job Queue & Redis
+redis = "^5.0.1"
+rq = "^1.15.1"
+
 # Monitoring & Logging
 prometheus-client = "^0.19.0"
 structlog = "^23.2.0"
