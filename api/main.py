@@ -57,7 +57,7 @@ try:
     from routers.restoration import router as restoration_router
     from routers.synthetic_data import router as synthetic_data_router
     from routers.files import router as files_router
-    from routers.jobs_rq import router as jobs_router
+    from routers.jobs_rq import router as jobs_router  # Corregido: jobs_rq
     from routers.training import router as training_router
     from routers.models import router as models_router
     logger.info("✅ Routers importados exitosamente")

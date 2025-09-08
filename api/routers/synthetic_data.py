@@ -27,6 +27,17 @@ except ImportError as e:
     FILE_CONFIG = {"MAX_SIZE": 50 * 1024 * 1024}
 
 logger = logging.getLogger(__name__)
+
+# Importar sistema RQ
+try:
+    from rq_job_system import get_job_queue_manager
+    RQ_AVAILABLE = True
+    job_manager = get_job_queue_manager()
+except ImportError as e:
+    logger.error(f"Error importando RQ system: {e}")
+    RQ_AVAILABLE = False
+    job_manager = None
+
 router = APIRouter(prefix="/synthetic", tags=["Datos Sintéticos"])
 
 @router.post("/noise")
@@ -114,14 +125,13 @@ async def degrade_image(
 
 @router.post("/training-pairs")
 async def generate_training_pairs(
-    background_tasks: BackgroundTasks,
     clean_bucket: str,
     count: int = 10
 ):
-    """Generar pares de entrenamiento usando servicios"""
+    """Generar pares de entrenamiento - MIGRADO A RQ"""
     try:
-        if not SERVICES_AVAILABLE:
-            raise HTTPException(status_code=503, detail="Servicios de datos sintéticos no disponibles")
+        if not RQ_AVAILABLE:
+            raise HTTPException(status_code=503, detail="Sistema RQ no disponible")
         
         # Validar parámetros usando constantes
         count_limits = SYNTHETIC_DATA_CONFIG.get("COUNT_LIMITS", {"min": 1, "max": 1000})
@@ -135,27 +145,26 @@ async def generate_training_pairs(
         if clean_bucket not in BUCKETS.values():
             raise HTTPException(status_code=400, detail="Bucket no válido")
         
-        # Crear trabajo usando jobs_service
-        job_result = jobs_service.create_job(
-            "training_pairs_generation",
-            clean_bucket=clean_bucket,
-            requested_count=count
+        # Enviar job a RQ
+        job_data = {
+            "clean_bucket": clean_bucket,
+            "requested_count": count,
+            "job_type": "training_pairs_generation"
+        }
+        
+        job_id = job_manager.enqueue_job(
+            'workers.tasks.synthetic_data_tasks.generate_synthetic_data_job',
+            job_kwargs=job_data,
+            queue='default'
         )
-        
-        if job_result["status"] == "error":
-            raise HTTPException(status_code=500, detail=job_result["message"])
-        
-        job_id = job_result["job_id"]
-        
-        # Procesar en background
-        background_tasks.add_task(process_training_pairs_with_service, job_id, clean_bucket, count)
         
         return JSONResponse({
             "job_id": job_id,
-            "status": "pending",
+            "status": "queued",
             "requested_count": count,
             "source_bucket": clean_bucket,
-            "message": RESPONSE_MESSAGES.get("job_created", "Trabajo creado exitosamente")
+            "message": "Trabajo encolado en RQ exitosamente",
+            "system": "rq"
         })
         
     except HTTPException:
@@ -166,14 +175,13 @@ async def generate_training_pairs(
 
 @router.post("/augment")
 async def augment_dataset(
-    background_tasks: BackgroundTasks,
     bucket: str,
     target_count: int = 100
 ):
-    """Aumentar dataset mediante augmentación usando servicios"""
+    """Aumentar dataset mediante augmentación - MIGRADO A RQ"""
     try:
-        if not SERVICES_AVAILABLE:
-            raise HTTPException(status_code=503, detail="Servicios de datos sintéticos no disponibles")
+        if not RQ_AVAILABLE:
+            raise HTTPException(status_code=503, detail="Sistema RQ no disponible")
         
         # Validar bucket
         if bucket not in BUCKETS.values():
@@ -187,27 +195,26 @@ async def augment_dataset(
                 detail=f"Target count debe estar entre {count_limits['augment_min']} y {count_limits['augment_max']}"
             )
         
-        # Crear trabajo usando jobs_service
-        job_result = jobs_service.create_job(
-            "dataset_augmentation",
-            bucket=bucket,
-            target_count=target_count
+        # Enviar job a RQ
+        job_data = {
+            "bucket": bucket,
+            "target_count": target_count,
+            "job_type": "dataset_augmentation"
+        }
+        
+        job_id = job_manager.enqueue_job(
+            'workers.tasks.synthetic_data_tasks.augment_dataset_job',
+            job_kwargs=job_data,
+            queue='default'
         )
-        
-        if job_result["status"] == "error":
-            raise HTTPException(status_code=500, detail=job_result["message"])
-        
-        job_id = job_result["job_id"]
-        
-        # Procesar en background
-        background_tasks.add_task(process_augmentation_with_service, job_id, bucket, target_count)
         
         return JSONResponse({
             "job_id": job_id,
-            "status": "pending",
+            "status": "queued",
             "target_count": target_count,
             "bucket": bucket,
-            "message": RESPONSE_MESSAGES.get("job_created", "Trabajo creado exitosamente")
+            "message": "Trabajo de augmentación encolado en RQ exitosamente",
+            "system": "rq"
         })
         
     except HTTPException:

@@ -9,9 +9,14 @@ import os
 import sys
 import logging
 import signal
+import platform
 from typing import List
 
 # Configurar paths
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(current_dir)
+sys.path.insert(0, project_root)
+sys.path.insert(0, current_dir)
 sys.path.append('/app')
 sys.path.append('/app/api')
 sys.path.append('/app/project_root')
@@ -27,7 +32,8 @@ def setup_worker():
     """Configurar worker RQ"""
     try:
         from redis import Redis
-        from rq import Worker, Queue, Connection
+        from rq import Worker, Queue
+        from rq.worker import SimpleWorker  # Worker sin fork para Windows
         
         # Configuración Redis
         redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
@@ -37,6 +43,10 @@ def setup_worker():
         worker_name = os.getenv('RQ_WORKER_NAME', 'doc-restoration-worker')
         queue_names = os.getenv('RQ_QUEUE_NAMES', 'high,default,low').split(',')
         
+        # Detectar sistema operativo
+        is_windows = platform.system() == 'Windows'
+        logger.info(f"🖥️ Sistema: {platform.system()}")
+        
         logger.info(f"🚀 Iniciando RQ Worker: {worker_name}")
         logger.info(f"📋 Colas a procesar: {queue_names}")
         logger.info(f"🔗 Redis URL: {redis_url}")
@@ -44,13 +54,25 @@ def setup_worker():
         # Crear colas
         queues = [Queue(name.strip(), connection=redis_conn) for name in queue_names]
         
-        # Crear worker
-        worker = Worker(
-            queues,
-            connection=redis_conn,
-            name=worker_name,
-            default_result_ttl=3600  # Mantener resultados 1 hora
-        )
+        # Crear worker con configuración específica del SO
+        if is_windows:
+            # Usar SimpleWorker para Windows (sin fork)
+            worker = SimpleWorker(
+                queues,
+                connection=redis_conn,
+                name=worker_name,
+                default_result_ttl=3600
+            )
+            logger.info("🪟 Usando SimpleWorker para Windows (sin fork)")
+        else:
+            # Usar Worker normal para Linux/Unix
+            worker = Worker(
+                queues,
+                connection=redis_conn,
+                name=worker_name,
+                default_result_ttl=3600
+            )
+            logger.info("🐧 Usando Worker normal para Unix/Linux")
         
         # Configurar handlers de señales para shutdown graceful
         def signal_handler(sig, frame):
