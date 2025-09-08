@@ -67,13 +67,13 @@ tmp/
 poetry.lock
 .venv/
 
-# Docker
+# Docker files (no necesarios dentro del container)
+docker/
 Dockerfile*
 docker-compose*.yml
-minio-setup*.sh
-minio-setup*.py
+.dockerignore
 
-# Documentación generada
+# Documentación (excepto README principal)
 *.md
 !README.md
 
@@ -81,29 +81,7 @@ minio-setup*.py
 .env
 .env.local
 .env.*.local
-Dockerfile*
-docker-compose*.yml
-.dockerignore
 
-# Scripts de desarrollo
-scripts/
-docker-manager.*
-
-# Documentación
-README.md
-POETRY_GUIDE.md
-*.md
-
-# Configuración local
-.env
-.env.local
-
-# Legacy files no necesarios en container
-legacy/
-requirements.txt
-api/requirements.txt
-
-# Tests (para imagen de producción)
-tests/
-test_*.py
-*_test.py
+# Scripts de desarrollo locales
+scripts/investigations/
+scripts/model-management/

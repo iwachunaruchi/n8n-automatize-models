@@ -124,7 +124,7 @@ services:
       GENERIC_TIMEZONE: America/Mexico_City
     volumes:
       - n8n_data:/home/node/.n8n
-      - ./n8n/workflows:/home/node/.n8n/workflows
+      - ../n8n/workflows:/home/node/.n8n/workflows
     depends_on:
       postgres:
         condition: service_healthy
@@ -282,8 +282,8 @@ services:
       minio:
         condition: service_healthy
     volumes:
-      - ./outputs:/app/outputs
-      - ./models:/app/models
+      - ../outputs:/app/outputs
+      - ../models:/app/models
       - training_logs:/app/logs
     networks:
       - doc-restoration-network

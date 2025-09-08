@@ -60,6 +60,5 @@ ENV PYTHONPATH=/app
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD python -c "import os; exit(0 if os.path.exists('/app/workers/temp/worker_health.txt') else 1)"
 
-# Comando por defecto: Worker modular con observador optimizado
-# Usa nuestro observador personalizado que es menos agresivo
-CMD ["python", "workers/optimized_watcher.py"]
+# Comando por defecto: Worker RQ profesional
+CMD ["python", "workers/rq_worker.py"]
