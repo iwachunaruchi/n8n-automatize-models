@@ -58,9 +58,9 @@ Start-Sleep -Seconds 15
 Show-Status "Configurando MinIO..."
 docker-compose -f docker-compose-rq.yml up --no-deps minio-setup
 
-# Iniciar API y Worker RQ
-Show-Status "Iniciando API y Worker RQ..."
-docker-compose -f docker-compose-rq.yml up -d doc-restoration-api rq-worker
+# Iniciar API, Worker RQ y n8n
+Show-Status "Iniciando API, Worker RQ y n8n..."
+docker-compose -f docker-compose-rq.yml up -d doc-restoration-api rq-worker n8n
 
 # Opcional: Iniciar Dashboard RQ
 Show-Status "Iniciando RQ Dashboard..."
@@ -75,7 +75,7 @@ Write-Host "  - API REST:        http://localhost:8000" -ForegroundColor White
 Write-Host "  - Documentacion:   http://localhost:8000/docs" -ForegroundColor White
 Write-Host "  - MinIO Console:   http://localhost:9001 (minio/minio123)" -ForegroundColor White
 Write-Host "  - RQ Dashboard:    http://localhost:9181" -ForegroundColor White
-Write-Host "  - n8n (opcional):  http://localhost:5678 (admin/admin123)" -ForegroundColor Gray
+Write-Host "  - n8n Automation:  http://localhost:5678 (admin/admin123)" -ForegroundColor White
 Write-Host ""
 
 Write-Host "COMANDOS UTILES:" -ForegroundColor Yellow
@@ -101,6 +101,15 @@ try {
     }
 } catch {
     Show-Warning "API aun iniciandose... (normal en primer arranque)"
+}
+
+try {
+    $n8nStatus = Invoke-WebRequest -Uri "http://localhost:5678" -Method GET -TimeoutSec 5 -UseBasicParsing
+    if ($n8nStatus.StatusCode -eq 200) {
+        Show-Success "n8n funcionando correctamente"
+    }
+} catch {
+    Show-Warning "n8n aun iniciandose... (normal en primer arranque)"
 }
 
 Show-Success "Setup completado!"
