@@ -1,4 +1,22 @@
+version: '3.8'
+
 services:
+  # Redis - Para cola de jobs
+  redis:
+    image: redis:7-alpine
+    container_name: doc-restoration-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - doc-restoration-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
   # MinIO - Object Storage
   minio:
     image: minio/minio:latest
@@ -118,7 +136,7 @@ services:
       timeout: 10s
       retries: 3
 
-  # API de Restauración - Con hot reload, debug y healthcheck
+  # API de Restauración - Con RQ para jobs
   doc-restoration-api:
     build: 
       context: ..
@@ -133,6 +151,9 @@ services:
       MINIO_ACCESS_KEY: minio
       MINIO_SECRET_KEY: minio123
       MINIO_SECURE: "false"
+      
+      # Redis Configuration for RQ
+      REDIS_URL: redis://redis:6379/0
       
       # API Configuration
       API_HOST: 0.0.0.0
@@ -153,6 +174,8 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     volumes:
       # Volúmenes para hot reload
       - ../outputs:/app/outputs
@@ -163,17 +186,16 @@ services:
       - ../scripts:/app/scripts   # Hot reload
       - ..:/app/project_root:ro   # Montar todo el proyecto para acceso a archivos raíz
       - api_logs:/app/logs
-      - shared_job_queue:/app/shared_queue  # Cola compartida con worker
     networks:
       - doc-restoration-network
     restart: unless-stopped
 
-  # Worker Modular - Con hot reload para procesamiento asíncrono
-  job-worker:
+  # RQ Worker - Worker profesional usando Redis Queue
+  rq-worker:
     build: 
       context: ..
       dockerfile: docker/Dockerfile.worker
-    container_name: job-worker
+    container_name: rq-worker
     environment:
       # MinIO Configuration
       MINIO_ENDPOINT: minio:9000
@@ -181,7 +203,12 @@ services:
       MINIO_SECRET_KEY: minio123
       MINIO_SECURE: "false"
       
+      # Redis Configuration for RQ
+      REDIS_URL: redis://redis:6379/0
+      
       # Worker Configuration
+      RQ_WORKER_NAME: doc-restoration-worker
+      RQ_QUEUE_NAMES: high,default,low
       WORKER_POLL_INTERVAL: 2
       MAX_CONCURRENT_JOBS: 3
       ENVIRONMENT: development
@@ -190,12 +217,8 @@ services:
       # Application Settings
       PYTHONPATH: /app
       WATCHFILES_FORCE_POLLING: "true"
-      
-      # Hot reload optimization - Solo observar workers/ y api/
-      WATCHFILES_POLL_INTERVAL: 3
-      WATCHFILES_IGNORE_PATTERNS: "__pycache__,*.pyc,*.pyo,*.tmp,.git,*.log"
     depends_on:
-      minio:
+      redis:
         condition: service_healthy
       doc-restoration-api:
         condition: service_started
@@ -203,16 +226,30 @@ services:
       # Volúmenes para hot reload del worker
       - ../workers:/app/workers               # Hot reload workers
       - ../api:/app/api                       # Hot reload API completa (incluye services)
-      - ..:/app/project_root:ro               # Acceso a archivos raíz como shared_job_queue.py
+      - ..:/app/project_root:ro               # Acceso a archivos raíz
       - ../outputs:/app/outputs
       - ../models:/app/models
       - ../src:/app/src
       - ../config:/app/config
       - worker_logs:/app/logs
-      - shared_job_queue:/app/shared_queue  # Cola compartida con API
     networks:
       - doc-restoration-network
     restart: unless-stopped
+    command: ["python", "-m", "workers.rq_worker"]
+
+  # RQ Dashboard - Monitoreo de jobs
+  rq-dashboard:
+    image: eoranged/rq-dashboard:latest
+    container_name: rq-dashboard
+    ports:
+      - "9181:9181"
+    environment:
+      RQ_DASHBOARD_REDIS_URL: redis://redis:6379/0
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - doc-restoration-network
 
   # Servicio de entrenamiento (separado)
   training-service:
@@ -249,6 +286,8 @@ services:
     command: ["python", "-m", "layers.train-layers.train_layer_2"]
 
 volumes:
+  redis_data:
+    name: doc_restoration_redis_data
   minio_data:
     name: doc_restoration_minio_data
   postgres_data:
@@ -261,8 +300,6 @@ volumes:
     name: doc_restoration_worker_logs
   training_logs:
     name: doc_restoration_training_logs
-  shared_job_queue:
-    name: doc_restoration_shared_job_queue
 
 networks:
   doc-restoration-network:

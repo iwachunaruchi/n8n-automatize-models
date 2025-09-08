@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 import logging
 import sys
 import os
+import uuid
 from typing import Optional
 
 # Importar modelos Pydantic desde la carpeta models

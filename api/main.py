@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 API REST para Restauración de Documentos - VERSIÓN MODULAR
-Integración con n8n y MinIO para automatización + Cola Compartida para Jobs
+Integración con n8n y MinIO para automatización + Redis Queue (RQ) para Jobs
 """
 
 import sys
@@ -20,16 +20,9 @@ from fastapi.responses import JSONResponse
 import logging
 from datetime import datetime
 
-# Importar cola compartida
-from shared_job_queue import create_shared_queue
-
 # Configuración de logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-# Inicializar cola compartida para jobs
-shared_queue = create_shared_queue()
-logger.info("🔄 Cola compartida inicializada")
 
 # Importar configuración
 try:
@@ -64,7 +57,7 @@ try:
     from routers.restoration import router as restoration_router
     from routers.synthetic_data import router as synthetic_data_router
     from routers.files import router as files_router
-    from routers.jobs import router as jobs_router
+    from routers.jobs_rq import router as jobs_router
     from routers.training import router as training_router
     from routers.models import router as models_router
     logger.info("✅ Routers importados exitosamente")
