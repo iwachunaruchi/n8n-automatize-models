@@ -21,7 +21,8 @@ def layer2_training_job(job_type: str = None,
                        num_epochs: int = None, 
                        batch_size: int = None, 
                        max_pairs: int = None,
-                       use_training_bucket: bool = None,
+                       task: str = None,
+                       use_nafnet_structure: bool = None,
                        use_finetuning: bool = None,
                        freeze_backbone: bool = None,
                        finetuning_lr_factor: float = None,
@@ -37,7 +38,8 @@ def layer2_training_job(job_type: str = None,
         num_epochs: Número de épocas de entrenamiento (legacy)
         batch_size: Tamaño del batch (legacy)
         max_pairs: Máximo número de pares de entrenamiento (legacy)
-        use_training_bucket: Usar bucket de entrenamiento (legacy)
+        task: Tarea NAFNet específica (ej: SIDD-width64, GoPro, etc.)
+        use_nafnet_structure: Usar estructura NAFNet en lugar de buckets legacy
         use_finetuning: Usar fine-tuning con modelo preentrenado
         freeze_backbone: Congelar backbone durante fine-tuning
         finetuning_lr_factor: Factor de learning rate para fine-tuning
@@ -54,7 +56,8 @@ def layer2_training_job(job_type: str = None,
         num_epochs = parameters.get('num_epochs', num_epochs or 10)
         batch_size = parameters.get('batch_size', batch_size or 8)
         max_pairs = parameters.get('max_pairs', max_pairs or 1000)
-        use_training_bucket = parameters.get('use_training_bucket', use_training_bucket or True)
+        task = parameters.get('task', task or "SIDD-width64")
+        use_nafnet_structure = parameters.get('use_nafnet_structure', use_nafnet_structure or True)
         use_finetuning = parameters.get('use_finetuning', use_finetuning or True)
         freeze_backbone = parameters.get('freeze_backbone', freeze_backbone or False)
         finetuning_lr_factor = parameters.get('finetuning_lr_factor', finetuning_lr_factor or 0.1)
@@ -63,12 +66,13 @@ def layer2_training_job(job_type: str = None,
         num_epochs = num_epochs or 10
         batch_size = batch_size or 8
         max_pairs = max_pairs or 1000
-        use_training_bucket = use_training_bucket or True
+        task = task or "SIDD-width64"
+        use_nafnet_structure = use_nafnet_structure or True
         use_finetuning = use_finetuning or True
         freeze_backbone = freeze_backbone or False
         finetuning_lr_factor = finetuning_lr_factor or 0.1
     
-    logger.info(f"🧠 Iniciando Layer 2 training: {num_epochs} épocas, batch_size: {batch_size}, fine-tuning: {use_finetuning}")
+    logger.info(f"🧠 Iniciando Layer 2 training: {num_epochs} épocas, batch_size: {batch_size}, tarea: {task}, fine-tuning: {use_finetuning}")
     
     try:
         # Importar servicios necesarios
@@ -80,7 +84,8 @@ def layer2_training_job(job_type: str = None,
             'num_epochs': num_epochs,
             'batch_size': batch_size,
             'max_pairs': max_pairs,
-            'use_training_bucket': use_training_bucket,
+            'task': task,
+            'use_nafnet_structure': use_nafnet_structure,
             'use_finetuning': use_finetuning,
             'freeze_backbone': freeze_backbone,
             'finetuning_lr_factor': finetuning_lr_factor
@@ -105,7 +110,8 @@ def layer2_training_job(job_type: str = None,
             num_epochs=num_epochs,
             batch_size=batch_size,
             max_pairs=max_pairs,
-            use_training_bucket=use_training_bucket,
+            task=task,
+            use_nafnet_structure=use_nafnet_structure,
             use_finetuning=use_finetuning,
             freeze_backbone=freeze_backbone,
             finetuning_lr_factor=finetuning_lr_factor

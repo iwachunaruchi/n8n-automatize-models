@@ -116,7 +116,112 @@ class TrainingService:
         return errors
     
     def check_layer2_data_status(self) -> Dict[str, Any]:
-        """Verificar estado de datos para Capa 2 - SIN HTTP REQUEST"""
+        """Verificar estado de datos para Capa 2 - Estructura NAFNet prioritaria"""
+        try:
+            # Primero, intentar verificar estructura NAFNet
+            nafnet_status = self._check_nafnet_structure_data()
+            
+            if nafnet_status.get("ready_for_training", False):
+                return nafnet_status
+            
+            # Si no hay datos NAFNet, verificar estructura legacy
+            legacy_status = self._check_legacy_training_data()
+            
+            # Combinar información
+            combined_status = {
+                "success": True,
+                "bucket": self.buckets['training'],
+                "primary_structure": "nafnet" if nafnet_status.get("nafnet_pairs", 0) > 0 else "legacy",
+                "nafnet_data": nafnet_status,
+                "legacy_data": legacy_status,
+                "statistics": nafnet_status.get("statistics", legacy_status.get("statistics", {})),
+                "ready_for_training": nafnet_status.get("ready_for_training", False) or legacy_status.get("ready_for_training", False),
+                "recommendations": {
+                    "minimum_pairs": 50,
+                    "recommended_pairs": 200,
+                    "preferred_structure": "nafnet",
+                    "action_needed": "generate_nafnet_dataset" if nafnet_status.get("nafnet_pairs", 0) == 0 else "none"
+                }
+            }
+            
+            return combined_status
+            
+        except Exception as e:
+            logger.error(f"Error verificando estado de datos: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "bucket": self.buckets['training'],
+                "statistics": {"total_files": 0, "valid_pairs": 0},
+                "ready_for_training": False
+            }
+    
+    def _check_nafnet_structure_data(self) -> Dict[str, Any]:
+        """Verificar datos en estructura NAFNet"""
+        try:
+            # Usar servicio MinIO directamente
+            files = minio_service.list_files(self.buckets['training'])
+            
+            # Filtrar archivos NAFNet
+            nafnet_files = [f for f in files if f.startswith('datasets/NAFNet/')]
+            
+            # Contar por tarea
+            tasks_data = {}
+            total_nafnet_pairs = 0
+            
+            for file_path in nafnet_files:
+                # datasets/NAFNet/SIDD-width64/train/lq/train_uuid-123_lq.png
+                path_parts = file_path.split('/')
+                if len(path_parts) >= 5:
+                    task = path_parts[2]  # SIDD-width64
+                    split = path_parts[3]  # train/val
+                    quality = path_parts[4]  # lq/gt
+                    
+                    if task not in tasks_data:
+                        tasks_data[task] = {
+                            "train": {"lq": 0, "gt": 0},
+                            "val": {"lq": 0, "gt": 0}
+                        }
+                    
+                    if split in ["train", "val"] and quality in ["lq", "gt"]:
+                        tasks_data[task][split][quality] += 1
+            
+            # Calcular pares por tarea
+            for task, data in tasks_data.items():
+                train_pairs = min(data["train"]["lq"], data["train"]["gt"])
+                val_pairs = min(data["val"]["lq"], data["val"]["gt"])
+                total_pairs = train_pairs + val_pairs
+                total_nafnet_pairs += total_pairs
+                
+                data["train_pairs"] = train_pairs
+                data["val_pairs"] = val_pairs
+                data["total_pairs"] = total_pairs
+            
+            return {
+                "success": True,
+                "structure_type": "nafnet",
+                "nafnet_files": len(nafnet_files),
+                "nafnet_pairs": total_nafnet_pairs,
+                "tasks_data": tasks_data,
+                "statistics": {
+                    "total_files": len(nafnet_files),
+                    "valid_pairs": total_nafnet_pairs,
+                    "structure": "nafnet"
+                },
+                "ready_for_training": total_nafnet_pairs > 0
+            }
+            
+        except Exception as e:
+            logger.error(f"Error verificando estructura NAFNet: {e}")
+            return {
+                "success": False,
+                "structure_type": "nafnet",
+                "nafnet_pairs": 0,
+                "ready_for_training": False
+            }
+    
+    def _check_legacy_training_data(self) -> Dict[str, Any]:
+        """Verificar datos en estructura legacy (clean_/degraded_)"""
         try:
             # Usar servicio MinIO directamente
             files = minio_service.list_files(self.buckets['training'])
@@ -134,33 +239,27 @@ class TrainingService:
                         valid_pairs += 1
             
             # Estadísticas adicionales
-            other_files = [f for f in files if not (f.startswith('clean_') or f.startswith('degraded_'))]
+            other_files = [f for f in files if not (f.startswith('clean_') or f.startswith('degraded_') or f.startswith('datasets/'))]
             
             return {
                 "success": True,
-                "bucket": self.buckets['training'],
+                "structure_type": "legacy",
                 "statistics": {
                     "total_files": len(files),
                     "clean_files": len(clean_files),
                     "degraded_files": len(degraded_files),
                     "valid_pairs": valid_pairs,
-                    "other_files": len(other_files)
+                    "other_files": len(other_files),
+                    "structure": "legacy"
                 },
-                "ready_for_training": valid_pairs > 0,
-                "recommendations": {
-                    "minimum_pairs": 50,
-                    "recommended_pairs": 200,
-                    "current_status": "sufficient" if valid_pairs >= 50 else "needs_more" if valid_pairs > 0 else "empty"
-                }
+                "ready_for_training": valid_pairs > 0
             }
             
         except Exception as e:
-            logger.error(f"Error verificando estado de datos: {e}")
+            logger.error(f"Error verificando estructura legacy: {e}")
             return {
                 "success": False,
-                "error": str(e),
-                "bucket": self.buckets['training'],
-                "statistics": {"total_files": 0, "valid_pairs": 0},
+                "structure_type": "legacy",
                 "ready_for_training": False
             }
     
@@ -325,10 +424,10 @@ class TrainingService:
     # ============================================================================
     
     async def start_layer2_training(self, job_id: str, num_epochs: int, max_pairs: int, 
-                                  batch_size: int, use_training_bucket: bool = True,
-                                  use_finetuning: bool = True, freeze_backbone: bool = False,
-                                  finetuning_lr_factor: float = 0.1):
-        """Ejecutar entrenamiento de Capa 2"""
+                                  batch_size: int, task: str = "SIDD-width64",
+                                  use_nafnet_structure: bool = True, use_finetuning: bool = True, 
+                                  freeze_backbone: bool = False, finetuning_lr_factor: float = 0.1):
+        """Ejecutar entrenamiento de Capa 2 con estructura NAFNet"""
         try:
             self.update_job_status(job_id, "running", 10)
             
@@ -339,12 +438,17 @@ class TrainingService:
             
             self.update_job_status(job_id, "running", 20)
             
-            # Verificar datos disponibles
+            # Verificar datos disponibles (priorizando estructura NAFNet)
             data_status = self.check_layer2_data_status()
             if not data_status["ready_for_training"]:
                 raise ValueError("Datos insuficientes para entrenamiento")
             
-            self.update_job_status(job_id, "running", 30)
+            # Determinar qué estructura usar
+            structure_to_use = data_status.get("primary_structure", "nafnet")
+            nafnet_pairs = data_status.get("nafnet_data", {}).get("nafnet_pairs", 0)
+            
+            self.update_job_status(job_id, "running", 30, 
+                                 message=f"Usando estructura {structure_to_use}, pares disponibles: {nafnet_pairs if structure_to_use == 'nafnet' else data_status.get('statistics', {}).get('valid_pairs', 0)}")
             
             # Importar trainer de Layer 2
             try:
@@ -356,19 +460,21 @@ class TrainingService:
             
             self.update_job_status(job_id, "running", 40)
             
-            # Ejecutar entrenamiento real con parámetros de fine-tuning
-            logger.info(f"Iniciando entrenamiento Layer 2 con fine-tuning: {use_finetuning}")
+            # Ejecutar entrenamiento real con parámetros de fine-tuning y estructura NAFNet
+            logger.info(f"Iniciando entrenamiento Layer 2 con estructura {structure_to_use}")
+            logger.info(f"Tarea: {task}, Fine-tuning: {use_finetuning}")
             logger.info(f"Parámetros: epochs={num_epochs}, pairs={max_pairs}, batch={batch_size}")
             logger.info(f"Fine-tuning: freeze_backbone={freeze_backbone}, lr_factor={finetuning_lr_factor}")
             
-            self.update_job_status(job_id, "running", 50, message="Entrenando modelo...")
+            self.update_job_status(job_id, "running", 50, message="Entrenando modelo con estructura NAFNet...")
             
-            # Ejecutar entrenamiento real
+            # Ejecutar entrenamiento real con nueva estructura
             trainer.train(
                 num_epochs=num_epochs,
                 max_pairs=max_pairs,
                 batch_size=batch_size,
-                use_training_bucket=use_training_bucket,
+                task=task,
+                use_nafnet_structure=use_nafnet_structure,
                 use_finetuning=use_finetuning,
                 freeze_backbone=freeze_backbone,
                 finetuning_lr_factor=finetuning_lr_factor
@@ -378,13 +484,13 @@ class TrainingService:
             
             # El modelo real fue guardado por el trainer, vamos a subirlo
             try:
-                model_name = f"model_{job_id}_{num_epochs}epochs.pth"
+                model_name = f"model_nafnet_{task}_{job_id}_{num_epochs}epochs.pth"
                 
                 # Buscar el modelo real entrenado
                 model_path_candidates = [
                     "/app/outputs/layer2_training/final_models.pth",
                     f"/app/outputs/layer2_training/model_{job_id}.pth",
-                    "/app/outputs/layer2_training/checkpoint_epoch_2.pth"
+                    "/app/outputs/layer2_training/checkpoint_epoch_5.pth"
                 ]
                 
                 model_file_path = None
@@ -411,6 +517,8 @@ class TrainingService:
                     "model_path": model_path,
                     "model_name": model_name,
                     "layer": "2",
+                    "task": task,
+                    "structure_used": structure_to_use,
                     "size_bytes": len(model_data),
                     "source_file": model_file_path if model_file_path else "dummy"
                 }
@@ -419,6 +527,8 @@ class TrainingService:
                 saved_model_info = {"error": str(e)}
             
             # Completar entrenamiento
+            pairs_used = nafnet_pairs if structure_to_use == "nafnet" else min(max_pairs, data_status["statistics"]["valid_pairs"])
+            
             self.update_job_status(
                 job_id, 
                 "completed", 
@@ -427,9 +537,11 @@ class TrainingService:
                 results={
                     "success": True,
                     "epochs_completed": num_epochs,
-                    "pairs_used": min(max_pairs, data_status["statistics"]["valid_pairs"]),
+                    "pairs_used": pairs_used,
                     "batch_size": batch_size,
-                    "use_training_bucket": use_training_bucket,
+                    "task": task,
+                    "structure_used": structure_to_use,
+                    "use_nafnet_structure": use_nafnet_structure,
                     "model_saved": saved_model_info,
                     "final_metrics": {
                         "loss": 0.05,  # Simulado
@@ -449,14 +561,16 @@ class TrainingService:
                     "current_epoch": num_epochs,  # Completadas todas las épocas
                     "batch_size": batch_size,
                     "max_pairs": max_pairs,
+                    "task": task,
+                    "structure_used": structure_to_use,
                     "learning_rate": 0.0001,  # Valor típico
-                    "architecture": "Restormer_Layer2",
-                    "use_training_bucket": use_training_bucket,
+                    "architecture": "NAFNet_Layer2",
+                    "use_nafnet_structure": use_nafnet_structure,
                     # Parámetros de fine-tuning
                     "use_finetuning": use_finetuning,
                     "freeze_backbone": freeze_backbone,
                     "finetuning_lr_factor": finetuning_lr_factor,
-                    "base_model": "NAFNet-SIDD-width64"
+                    "base_model": f"NAFNet-{task}"
                 }
                 
                 # Añadir duración calculada
@@ -489,7 +603,7 @@ class TrainingService:
                 # Métricas finales
                 final_epoch = training_metrics["epoch_metrics"][num_epochs]
                 job_complete_data["results"]["final_metrics"] = final_epoch
-                job_complete_data["results"]["pairs_used"] = min(max_pairs, data_status["statistics"]["valid_pairs"])
+                job_complete_data["results"]["pairs_used"] = pairs_used
                 
                 report_path = training_report_service.generate_training_report(
                     job_data=job_complete_data,

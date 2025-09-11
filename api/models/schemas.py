@@ -74,11 +74,12 @@ class DatasetStats(BaseModel):
     error: Optional[str] = None
 
 class Layer2TrainingRequest(BaseModel):
-    """Modelo para request de entrenamiento Layer 2"""
+    """Modelo para request de entrenamiento Layer 2 con estructura NAFNet"""
     num_epochs: int = 10
     max_pairs: int = 100
     batch_size: int = 2
-    use_training_bucket: bool = True
+    task: str = "SIDD-width64"  # Tarea NAFNet específica
+    use_nafnet_structure: bool = True  # Usar nueva estructura NAFNet
     use_finetuning: bool = True
     freeze_backbone: bool = False
     finetuning_lr_factor: float = 0.1

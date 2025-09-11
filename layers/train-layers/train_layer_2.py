@@ -428,22 +428,24 @@ class SimpleDocUNet(nn.Module):
 # ============================================================================
 
 class DocumentDataset(Dataset):
-    """Dataset que carga imágenes usando servicios directos (sin HTTP)"""
+    """Dataset que carga imágenes usando la nueva estructura NAFNet"""
     
     def __init__(self, max_pairs: int = 100, patch_size: int = 128, 
-                 use_training_bucket: bool = True):
+                 task: str = "SIDD-width64", use_nafnet_structure: bool = True):
         self.patch_size = patch_size
         self.pairs = []
-        self.use_training_bucket = use_training_bucket
+        self.task = task
+        self.use_nafnet_structure = use_nafnet_structure
         
         if not SERVICES_AVAILABLE:
             raise ImportError("Servicios MinIO no disponibles")
         
-        # Cargar pares de imágenes
-        if use_training_bucket:
-            self._load_training_bucket_pairs(max_pairs)
+        # Cargar pares de imágenes según la estructura
+        if use_nafnet_structure:
+            self._load_nafnet_structure_pairs(max_pairs)
         else:
-            self._load_image_pairs(max_pairs)
+            # Fallback al método legacy para compatibilidad
+            self._load_legacy_training_bucket_pairs(max_pairs)
         
         # Transformaciones
         self.transform = A.Compose([
@@ -453,15 +455,74 @@ class DocumentDataset(Dataset):
             ToTensorV2()
         ])
     
-    def _load_training_bucket_pairs(self, max_pairs: int):
-        """Cargar pares desde bucket de entrenamiento usando servicios directos"""
-        print(f"📥 Cargando pares desde bucket 'document-training'...")
+    def _load_nafnet_structure_pairs(self, max_pairs: int):
+        """Cargar pares desde estructura NAFNet organizada"""
+        print(f"📥 Cargando pares desde estructura NAFNet (tarea: {self.task})...")
+        
+        try:
+            # Obtener archivos del bucket usando servicio directo
+            all_files = minio_service.list_files(MINIO_BUCKETS['training'])
+            
+            # Filtrar archivos que pertenecen a la tarea NAFNet actual
+            task_prefix = f"datasets/NAFNet/{self.task}/"
+            
+            # Separar archivos por split y quality
+            train_lq_files = [f for f in all_files if f.startswith(f"{task_prefix}train/lq/")]
+            train_gt_files = [f for f in all_files if f.startswith(f"{task_prefix}train/gt/")]
+            val_lq_files = [f for f in all_files if f.startswith(f"{task_prefix}val/lq/")]
+            val_gt_files = [f for f in all_files if f.startswith(f"{task_prefix}val/gt/")]
+            
+            print(f"📊 Train LQ: {len(train_lq_files)}, Train GT: {len(train_gt_files)}")
+            print(f"📊 Val LQ: {len(val_lq_files)}, Val GT: {len(val_gt_files)}")
+            
+            # Combinar archivos de train y val para el dataset
+            all_lq_files = train_lq_files + val_lq_files
+            all_gt_files = train_gt_files + val_gt_files
+            
+            # Crear pares basados en el UUID común en el nombre
+            pairs_found = 0
+            for lq_file in all_lq_files:
+                if pairs_found >= max_pairs:
+                    break
+                
+                # Extraer UUID del archivo LQ: train_uuid-123_lq.png -> uuid-123
+                filename = lq_file.split('/')[-1]  # obtener solo el nombre del archivo
+                if '_' in filename and '_lq.' in filename:
+                    # Formato: train_uuid-123_lq.png o val_uuid-456_lq.png
+                    uuid_part = filename.split('_')[1].replace('_lq', '')  # uuid-123
+                    
+                    # Buscar archivo GT correspondiente con el mismo UUID
+                    gt_candidates = [f for f in all_gt_files 
+                                   if uuid_part in f and '_gt.' in f]
+                    
+                    if gt_candidates:
+                        gt_file = gt_candidates[0]  # tomar el primero que coincida
+                        self.pairs.append((lq_file, gt_file))  # (input, target)
+                        pairs_found += 1
+                        
+                        if pairs_found <= 5:  # Mostrar solo los primeros 5
+                            print(f"✅ Par NAFNet encontrado: {filename} -> {gt_file.split('/')[-1]}")
+            
+            print(f"📊 Pares NAFNet válidos encontrados: {len(self.pairs)}")
+            
+            if len(self.pairs) == 0:
+                print("⚠️ No se encontraron pares NAFNet, probando método legacy...")
+                self._load_legacy_training_bucket_pairs(max_pairs)
+            
+        except Exception as e:
+            print(f"❌ Error cargando pares NAFNet: {e}")
+            # Fallback al método legacy
+            self._load_legacy_training_bucket_pairs(max_pairs)
+    
+    def _load_legacy_training_bucket_pairs(self, max_pairs: int):
+        """Cargar pares desde bucket de entrenamiento (método legacy)"""
+        print(f"📥 Cargando pares desde bucket 'document-training' (método legacy)...")
         
         try:
             # Obtener archivos del bucket usando servicio directo
             files = minio_service.list_files(MINIO_BUCKETS['training'])
             
-            # Separar archivos clean y degraded
+            # Separar archivos clean y degraded (método original)
             clean_files = [f for f in files if f.startswith('clean_')]
             degraded_files = [f for f in files if f.startswith('degraded_')]
             
@@ -486,13 +547,13 @@ class DocumentDataset(Dataset):
                         pairs_found += 1
                         
                         if pairs_found <= 5:  # Mostrar solo los primeros 5
-                            print(f"✅ Par encontrado: {degraded_match} -> {clean_file}")
+                            print(f"✅ Par legacy encontrado: {degraded_match} -> {clean_file}")
             
-            print(f"📊 Pares válidos encontrados: {len(self.pairs)}")
+            print(f"📊 Pares legacy válidos encontrados: {len(self.pairs)}")
             
         except Exception as e:
             print(f"❌ Error cargando pares del bucket de entrenamiento: {e}")
-            # Fallback al método original
+            # Fallback final al método separado
             self._load_image_pairs(max_pairs)
     
     def _load_image_pairs(self, max_pairs: int):
@@ -571,15 +632,9 @@ class DocumentDataset(Dataset):
     def __getitem__(self, idx):
         degraded_file, clean_file = self.pairs[idx]
         
-        # Determinar bucket según el método usado y descargar imágenes
-        if self.use_training_bucket:
-            # Ambos archivos están en el bucket de entrenamiento
-            degraded = self._download_image(MINIO_BUCKETS['training'], degraded_file)
-            clean = self._download_image(MINIO_BUCKETS['training'], clean_file)
-        else:
-            # Método original: buckets separados
-            degraded = self._download_image(MINIO_BUCKETS['degraded'], degraded_file)
-            clean = self._download_image(MINIO_BUCKETS['clean'], clean_file)
+        # Para estructura NAFNet o legacy, ambos archivos están en document-training
+        degraded = self._download_image(MINIO_BUCKETS['training'], degraded_file)
+        clean = self._download_image(MINIO_BUCKETS['training'], clean_file)
         
         if degraded is None or clean is None:
             # Fallback más robusto: intentar con otros índices sin recursión infinita
@@ -589,12 +644,9 @@ class DocumentDataset(Dataset):
                     try:
                         fallback_degraded_file, fallback_clean_file = self.pairs[fallback_idx]
                         
-                        if self.use_training_bucket:
-                            fallback_degraded = self._download_image(MINIO_BUCKETS['training'], fallback_degraded_file)
-                            fallback_clean = self._download_image(MINIO_BUCKETS['training'], fallback_clean_file)
-                        else:
-                            fallback_degraded = self._download_image(MINIO_BUCKETS['degraded'], fallback_degraded_file)
-                            fallback_clean = self._download_image(MINIO_BUCKETS['clean'], fallback_clean_file)
+                        # Siempre usar bucket de entrenamiento
+                        fallback_degraded = self._download_image(MINIO_BUCKETS['training'], fallback_degraded_file)
+                        fallback_clean = self._download_image(MINIO_BUCKETS['training'], fallback_clean_file)
                         
                         if fallback_degraded is not None and fallback_clean is not None:
                             degraded, clean = fallback_degraded, fallback_clean
@@ -792,22 +844,33 @@ class Layer2Trainer:
         return {'val_loss': total_loss / len(dataloader)}
     
     def train(self, num_epochs: int = 10, max_pairs: int = 100, batch_size: int = 4, 
-              use_training_bucket: bool = True, use_finetuning: bool = True, 
-              freeze_backbone: bool = False, finetuning_lr_factor: float = 0.1):
-        """Entrenamiento completo"""
-        print("🔧 ENTRENAMIENTO CAPA 2: NAFNet + DocUNet")
+              task: str = "SIDD-width64", use_nafnet_structure: bool = True, 
+              use_finetuning: bool = True, freeze_backbone: bool = False, 
+              finetuning_lr_factor: float = 0.1):
+        """Entrenamiento completo con estructura NAFNet"""
+        print("🔧 ENTRENAMIENTO CAPA 2: NAFNet + DocUNet (Estructura NAFNet)")
         print("=" * 60)
         print(f"🔧 Dispositivo: {self.device}")
         print(f"📊 Épocas: {num_epochs}")
         print(f"📦 Batch size: {batch_size}")
-        print(f"📁 Usando bucket de entrenamiento: {use_training_bucket}")
+        print(f"🎯 Tarea NAFNet: {task}")
+        print(f"📁 Usando estructura NAFNet: {use_nafnet_structure}")
         
-        # Crear dataset usando servicios directos
-        dataset = DocumentDataset(max_pairs=max_pairs, 
-                                 patch_size=128, use_training_bucket=use_training_bucket)
+        # Crear dataset usando la nueva estructura NAFNet
+        dataset = DocumentDataset(
+            max_pairs=max_pairs, 
+            patch_size=128, 
+            task=task,
+            use_nafnet_structure=use_nafnet_structure
+        )
         
         if len(dataset) == 0:
             print("❌ No se encontraron pares de imágenes para entrenar")
+            print("💡 Sugerencias:")
+            print("   1. Generar dataset NAFNet primero:")
+            print(f"      curl -X POST 'http://localhost:8000/synthetic/nafnet/dataset' -H 'Content-Type: application/json' -d '{{\"source_bucket\": \"document-clean\", \"count\": 50, \"task\": \"{task}\"}}'")
+            print("   2. Verificar que existan archivos en la estructura:")
+            print(f"      datasets/NAFNet/{task}/train/lq/ y datasets/NAFNet/{task}/train/gt/")
             return
         
         # Dividir en train/val
