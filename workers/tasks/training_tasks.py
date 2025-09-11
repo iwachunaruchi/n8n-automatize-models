@@ -14,19 +14,33 @@ from ..utils.rq_utils import RQJobProgressTracker, setup_job_environment, execut
 
 logger = logging.getLogger(__name__)
 
-def layer2_training_job(num_epochs: int = 10, 
-                       batch_size: int = 8, 
-                       max_pairs: int = 1000,
-                       use_training_bucket: bool = True,
+def layer2_training_job(job_type: str = None,
+                       parameters: Dict[str, Any] = None,
+                       created_at: str = None,
+                       status: str = None,
+                       num_epochs: int = None, 
+                       batch_size: int = None, 
+                       max_pairs: int = None,
+                       use_training_bucket: bool = None,
+                       use_finetuning: bool = None,
+                       freeze_backbone: bool = None,
+                       finetuning_lr_factor: float = None,
                        **kwargs) -> Dict[str, Any]:
     """
     🧠 Job de entrenamiento Layer 2
     
     Args:
-        num_epochs: Número de épocas de entrenamiento
-        batch_size: Tamaño del batch
-        max_pairs: Máximo número de pares de entrenamiento
-        use_training_bucket: Usar bucket de entrenamiento
+        job_type: Tipo de job
+        parameters: Diccionario con parámetros de entrenamiento
+        created_at: Timestamp de creación
+        status: Estado inicial del job
+        num_epochs: Número de épocas de entrenamiento (legacy)
+        batch_size: Tamaño del batch (legacy)
+        max_pairs: Máximo número de pares de entrenamiento (legacy)
+        use_training_bucket: Usar bucket de entrenamiento (legacy)
+        use_finetuning: Usar fine-tuning con modelo preentrenado
+        freeze_backbone: Congelar backbone durante fine-tuning
+        finetuning_lr_factor: Factor de learning rate para fine-tuning
         **kwargs: Parámetros adicionales de RQ
     
     Returns:
@@ -35,7 +49,26 @@ def layer2_training_job(num_epochs: int = 10,
     setup_job_environment()
     tracker = RQJobProgressTracker()
     
-    logger.info(f"🧠 Iniciando Layer 2 training: {num_epochs} épocas, batch_size: {batch_size}")
+    # Extraer parámetros del diccionario si están disponibles
+    if parameters:
+        num_epochs = parameters.get('num_epochs', num_epochs or 10)
+        batch_size = parameters.get('batch_size', batch_size or 8)
+        max_pairs = parameters.get('max_pairs', max_pairs or 1000)
+        use_training_bucket = parameters.get('use_training_bucket', use_training_bucket or True)
+        use_finetuning = parameters.get('use_finetuning', use_finetuning or True)
+        freeze_backbone = parameters.get('freeze_backbone', freeze_backbone or False)
+        finetuning_lr_factor = parameters.get('finetuning_lr_factor', finetuning_lr_factor or 0.1)
+    else:
+        # Valores por defecto si no hay diccionario de parámetros
+        num_epochs = num_epochs or 10
+        batch_size = batch_size or 8
+        max_pairs = max_pairs or 1000
+        use_training_bucket = use_training_bucket or True
+        use_finetuning = use_finetuning or True
+        freeze_backbone = freeze_backbone or False
+        finetuning_lr_factor = finetuning_lr_factor or 0.1
+    
+    logger.info(f"🧠 Iniciando Layer 2 training: {num_epochs} épocas, batch_size: {batch_size}, fine-tuning: {use_finetuning}")
     
     try:
         # Importar servicios necesarios
@@ -47,7 +80,10 @@ def layer2_training_job(num_epochs: int = 10,
             'num_epochs': num_epochs,
             'batch_size': batch_size,
             'max_pairs': max_pairs,
-            'use_training_bucket': use_training_bucket
+            'use_training_bucket': use_training_bucket,
+            'use_finetuning': use_finetuning,
+            'freeze_backbone': freeze_backbone,
+            'finetuning_lr_factor': finetuning_lr_factor
         }
         
         tracker.update_progress(10, "Configuración completada, iniciando entrenamiento...")
@@ -58,14 +94,22 @@ def layer2_training_job(num_epochs: int = 10,
             job_progress = int(10 + (progress * 0.8))
             tracker.update_progress(job_progress, f"Entrenamiento: {message}")
         
-        # Ejecutar entrenamiento
-        training_result = training_service.train_layer2(
+        # Generar un job_id interno para el servicio de entrenamiento
+        import uuid
+        internal_job_id = str(uuid.uuid4())[:8]
+        
+        # Ejecutar entrenamiento con parámetros de fine-tuning
+        import asyncio
+        training_result = asyncio.run(training_service.start_layer2_training(
+            job_id=internal_job_id,
             num_epochs=num_epochs,
             batch_size=batch_size,
             max_pairs=max_pairs,
             use_training_bucket=use_training_bucket,
-            progress_callback=training_progress_callback
-        )
+            use_finetuning=use_finetuning,
+            freeze_backbone=freeze_backbone,
+            finetuning_lr_factor=finetuning_lr_factor
+        ))
         
         tracker.update_progress(95, "Finalizando y guardando resultados...")
         
@@ -89,17 +133,27 @@ def layer2_training_job(num_epochs: int = 10,
         logger.error(f"❌ Error en Layer 2 training: {e}")
         raise
 
-def layer1_training_job(model_type: str = "restormer",
-                       num_epochs: int = 20,
-                       batch_size: int = 4,
+def layer1_training_job(job_type: str = None,
+                       parameters: Dict[str, Any] = None,
+                       created_at: str = None,
+                       status: str = None,
+                       model_type: str = None,
+                       num_epochs: int = None,
+                       batch_size: int = None,
+                       max_images: int = None,
                        **kwargs) -> Dict[str, Any]:
     """
     🔧 Job de entrenamiento Layer 1
     
     Args:
-        model_type: Tipo de modelo (restormer, nafnet, etc.)
-        num_epochs: Número de épocas
-        batch_size: Tamaño del batch
+        job_type: Tipo de job
+        parameters: Diccionario con parámetros de entrenamiento
+        created_at: Timestamp de creación
+        status: Estado inicial del job
+        model_type: Tipo de modelo (restormer, nafnet, etc.) (legacy)
+        num_epochs: Número de épocas (legacy)
+        batch_size: Tamaño del batch (legacy)
+        max_images: Máximo número de imágenes para evaluación
         **kwargs: Parámetros adicionales de RQ
     
     Returns:
@@ -108,47 +162,56 @@ def layer1_training_job(model_type: str = "restormer",
     setup_job_environment()
     tracker = RQJobProgressTracker()
     
-    logger.info(f"🔧 Iniciando Layer 1 training: {model_type}, {num_epochs} épocas")
+    # Extraer parámetros del diccionario si están disponibles
+    if parameters:
+        model_type = parameters.get('model_type', model_type or "restormer")
+        num_epochs = parameters.get('num_epochs', num_epochs or 20)
+        batch_size = parameters.get('batch_size', batch_size or 4)
+        max_images = parameters.get('max_images', max_images or 30)
+    else:
+        # Valores por defecto si no hay diccionario de parámetros
+        model_type = model_type or "restormer"
+        num_epochs = num_epochs or 20
+        batch_size = batch_size or 4
+        max_images = max_images or 30
+    
+    logger.info(f"🔧 Iniciando Layer 1 training: {model_type}, {num_epochs} épocas, max_images: {max_images}")
     
     try:
-        tracker.update_progress(5, "Preparando entrenamiento Layer 1...")
+        tracker.update_progress(5, "Preparando evaluación Layer 1...")
         
-        # Importar módulo de entrenamiento Layer 1
-        from layers.train_layers.train_layer_1 import train_layer_1
+        # Importar servicio de entrenamiento
+        from api.services.training_service import training_service
         
         training_params = {
-            'model_type': model_type,
-            'num_epochs': num_epochs,
-            'batch_size': batch_size
+            'max_images': max_images
         }
         
-        tracker.update_progress(10, f"Iniciando entrenamiento {model_type}...")
+        tracker.update_progress(10, f"Iniciando evaluación Layer 1 con {max_images} imágenes...")
         
-        # Callback de progreso
-        def l1_progress_callback(epoch: int, total_epochs: int, loss: float):
-            progress = int(10 + ((epoch / total_epochs) * 80))
-            tracker.update_progress(progress, f"Época {epoch}/{total_epochs}, Loss: {loss:.4f}")
+        # Generar un job_id interno para el servicio de entrenamiento
+        import uuid
+        internal_job_id = str(uuid.uuid4())[:8]
         
-        # Ejecutar entrenamiento Layer 1
-        training_result = train_layer_1(
-            model_type=model_type,
-            num_epochs=num_epochs,
-            batch_size=batch_size,
-            progress_callback=l1_progress_callback
-        )
+        # Ejecutar evaluación Layer 1 usando el servicio
+        import asyncio
+        training_result = asyncio.run(training_service.start_layer1_evaluation(
+            job_id=internal_job_id,
+            max_images=max_images
+        ))
         
         final_result = {
             'status': 'completed',
-            'training_result': training_result,
+            'evaluation_result': training_result,
             'parameters': training_params,
             'completed_at': datetime.now().isoformat(),
-            'job_type': 'layer1_training'
+            'job_type': 'layer1_evaluation'
         }
         
         tracker.set_result(final_result)
-        tracker.update_progress(100, f"Entrenamiento Layer 1 ({model_type}) completado")
+        tracker.update_progress(100, f"Evaluación Layer 1 completada con {max_images} imágenes")
         
-        logger.info(f"✅ Layer 1 training completado: {model_type}")
+        logger.info(f"✅ Layer 1 evaluation completado: {max_images} imágenes procesadas")
         return final_result
         
     except Exception as e:

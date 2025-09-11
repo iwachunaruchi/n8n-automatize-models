@@ -70,7 +70,6 @@ async def start_layer1_evaluation(
         job_id = create_job_id("layer1_evaluation")
         
         job_data = {
-            "job_id": job_id,
             "job_type": "layer1_evaluation", 
             "parameters": {
                 "max_images": max_images
@@ -84,7 +83,8 @@ async def start_layer1_evaluation(
             job_manager.enqueue_job(
                 'workers.tasks.training_tasks.layer1_training_job',
                 job_kwargs=job_data,
-                priority='default'
+                priority='default',
+                job_id=job_id
             )
             logger.info(f"🔍 Layer1 evaluation job enviado a RQ: {job_id}")
         else:
@@ -138,7 +138,6 @@ async def start_layer2_training(
         job_id = create_job_id("layer2_training")
         
         job_data = {
-            "job_id": job_id,
             "job_type": "layer2_training",
             "parameters": {
                 "num_epochs": request.num_epochs,
@@ -158,7 +157,8 @@ async def start_layer2_training(
             job_manager.enqueue_job(
                 'workers.tasks.training_tasks.layer2_training_job',
                 job_kwargs=job_data,
-                priority='default'
+                priority='default',
+                job_id=job_id
             )
             logger.info(f"🧠 Training job enviado a RQ: {job_id}")
         else:
