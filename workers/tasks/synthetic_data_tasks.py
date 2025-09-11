@@ -227,3 +227,160 @@ def validate_synthetic_data_job(bucket_name: str = "document-training",
         tracker.log_error(e, "Synthetic Data Validation")
         logger.error(f"❌ Error en validación de datos sintéticos: {e}")
         raise
+
+def generate_nafnet_dataset_job(source_bucket: str,
+                               count: int,
+                               task: str = "SIDD-width64",
+                               train_val_split: bool = True,
+                               **kwargs) -> Dict[str, Any]:
+    """
+    🎯 Job de generación de dataset NAFNet estructurado
+    
+    Args:
+        source_bucket: Bucket con imágenes fuente
+        count: Número total de pares a generar
+        task: Tarea NAFNet específica
+        train_val_split: Si dividir en train/val
+        **kwargs: Parámetros adicionales de RQ
+    
+    Returns:
+        Dict con resultados de la generación NAFNet
+    """
+    setup_job_environment()
+    tracker = RQJobProgressTracker()
+    
+    logger.info(f"🎯 Iniciando generación de dataset NAFNet: {count} pares para tarea '{task}'")
+    
+    try:
+        tracker.update_progress(5, f"Preparando generación dataset NAFNet para {task}...")
+        
+        # Importar servicio de datos sintéticos
+        from api.services.synthetic_data_service import synthetic_data_service
+        
+        tracker.update_progress(10, "Configuración completada, iniciando generación NAFNet...")
+        
+        # Ejecutar generación de dataset NAFNet estructurado
+        generation_result = synthetic_data_service.generate_nafnet_training_dataset(
+            source_bucket=source_bucket,
+            count=count,
+            task=task,
+            train_val_split=train_val_split
+        )
+        
+        tracker.update_progress(95, "Finalizando generación NAFNet...")
+        
+        # Preparar resultado final
+        final_result = {
+            'status': 'completed',
+            'generation_result': generation_result,
+            'source_bucket': source_bucket,
+            'count': count,
+            'task': task,
+            'train_val_split': train_val_split,
+            'completed_at': datetime.now().isoformat(),
+            'job_type': 'nafnet_dataset_generation',
+            'dataset_structure': generation_result.get('dataset_structure', 'N/A'),
+            'total_generated': generation_result.get('total_generated', 0)
+        }
+        
+        tracker.set_result(final_result)
+        tracker.update_progress(100, f"Dataset NAFNet generado: {generation_result.get('total_generated', 0)} pares")
+        
+        logger.info(f"✅ Dataset NAFNet '{task}' completado: {generation_result.get('total_generated', 0)} pares")
+        return final_result
+        
+    except Exception as e:
+        tracker.log_error(e, "NAFNet Dataset Generation")
+        logger.error(f"❌ Error en generación dataset NAFNet: {e}")
+        raise
+
+def validate_nafnet_dataset_job(task: str = "SIDD-width64",
+                               **kwargs) -> Dict[str, Any]:
+    """
+    ✅ Job de validación de dataset NAFNet
+    
+    Args:
+        task: Tarea NAFNet a validar
+        **kwargs: Parámetros adicionales de RQ
+    
+    Returns:
+        Dict con resultados de la validación NAFNet
+    """
+    setup_job_environment()
+    tracker = RQJobProgressTracker()
+    
+    logger.info(f"✅ Iniciando validación de dataset NAFNet para tarea '{task}'")
+    
+    try:
+        tracker.update_progress(5, f"Preparando validación NAFNet para {task}...")
+        
+        # Importar servicios
+        from api.services.synthetic_data_service import synthetic_data_service
+        from api.services.minio_service import minio_service
+        
+        tracker.update_progress(10, "Obteniendo información del dataset...")
+        
+        # Obtener información del dataset NAFNet
+        dataset_info = synthetic_data_service.get_nafnet_dataset_info(task)
+        
+        if dataset_info["status"] != "success":
+            raise Exception(f"Error obteniendo info dataset: {dataset_info['message']}")
+        
+        dataset_stats = dataset_info["dataset_info"]
+        
+        tracker.update_progress(30, "Validando estructura de directorios...")
+        
+        # Validar estructura completa
+        validation_results = {
+            'task': task,
+            'structure_valid': True,
+            'train_pairs': dataset_stats['structure']['complete_pairs']['train'],
+            'val_pairs': dataset_stats['structure']['complete_pairs']['val'],
+            'total_pairs': dataset_stats['total_pairs'],
+            'issues': [],
+            'recommendations': []
+        }
+        
+        # Verificar que hay pares suficientes
+        if validation_results['train_pairs'] < 10:
+            validation_results['issues'].append("Muy pocos pares de entrenamiento (< 10)")
+            validation_results['recommendations'].append("Generar más pares de entrenamiento")
+        
+        if validation_results['val_pairs'] < 2:
+            validation_results['issues'].append("Muy pocos pares de validación (< 2)")
+            validation_results['recommendations'].append("Generar más pares de validación")
+        
+        # Verificar balance train/val
+        total_pairs = validation_results['train_pairs'] + validation_results['val_pairs']
+        if total_pairs > 0:
+            val_ratio = validation_results['val_pairs'] / total_pairs
+            if val_ratio < 0.1 or val_ratio > 0.3:
+                validation_results['issues'].append(f"Ratio de validación no óptimo: {val_ratio:.2f}")
+                validation_results['recommendations'].append("Ratio recomendado: 0.15-0.25")
+        
+        tracker.update_progress(80, "Validando integridad de archivos...")
+        
+        # Aquí se pueden agregar más validaciones específicas
+        # Por ejemplo, verificar que las imágenes lq y gt coinciden en número
+        
+        validation_results['structure_valid'] = len(validation_results['issues']) == 0
+        validation_results['health_score'] = max(0, 100 - len(validation_results['issues']) * 20)
+        
+        final_result = {
+            'status': 'completed',
+            'validation_results': validation_results,
+            'task': task,
+            'completed_at': datetime.now().isoformat(),
+            'job_type': 'nafnet_dataset_validation'
+        }
+        
+        tracker.set_result(final_result)
+        tracker.update_progress(100, f"Validación NAFNet completada: {validation_results['health_score']}% saludable")
+        
+        logger.info(f"✅ Validación NAFNet '{task}' completada: {validation_results['health_score']}% saludable")
+        return final_result
+        
+    except Exception as e:
+        tracker.log_error(e, "NAFNet Dataset Validation")
+        logger.error(f"❌ Error en validación NAFNet: {e}")
+        raise

@@ -140,6 +140,40 @@ SYNTHETIC_DATA_CONFIG = {
     "BATCH_SIZE": 8
 }
 
+# ===== CONFIGURACIÓN DE MODELOS NAFNET =====
+NAFNET_CONFIG = {
+    "CORE_NAME": "NAFNet",
+    "AVAILABLE_TASKS": {
+        "SIDD-width64": {
+            "model_name": "NAFNet-SIDD-width64.pth",
+            "task_description": "Image denoising trained on SIDD dataset",
+            "degradation_types": ["gaussian_noise", "real_noise", "mixed_noise"],
+            "recommended_intensity": {"min": 0.01, "max": 0.3},
+            "image_size": [256, 256],
+            "dataset_structure": "datasets/{core}/{task}/train/lq|gt, val/lq|gt"
+        },
+        "GoPro": {
+            "model_name": "NAFNet-GoPro.pth", 
+            "task_description": "Motion deblurring trained on GoPro dataset",
+            "degradation_types": ["motion_blur", "gaussian_blur"],
+            "recommended_intensity": {"min": 0.1, "max": 0.8},
+            "image_size": [256, 256],
+            "dataset_structure": "datasets/{core}/{task}/train/lq|gt, val/lq|gt"
+        },
+        "FLICKR1024": {
+            "model_name": "NAFNet-FLICKR1024.pth",
+            "task_description": "Super resolution trained on FLICKR1024 dataset", 
+            "degradation_types": ["downsampling", "compression", "blur"],
+            "recommended_intensity": {"min": 0.1, "max": 0.5},
+            "image_size": [512, 512],
+            "dataset_structure": "datasets/{core}/{task}/train/lq|gt, val/lq|gt"
+        }
+    },
+    "CURRENT_TASK": "SIDD-width64",  # Tarea actualmente en uso
+    "VALIDATION_SPLIT": 0.2,  # 20% para validación
+    "TRAIN_VAL_RATIO": 0.8,   # 80% para entrenamiento
+}
+
 # ===== CONFIGURACIÓN DE API =====
 API_CONFIG = {
     "TITLE": "Document Restoration API",

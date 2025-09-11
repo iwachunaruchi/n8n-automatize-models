@@ -339,3 +339,132 @@ async def process_augmentation_with_service(job_id: str, bucket: str, target_cou
             progress=0,
             error=str(e)
         )
+
+# ===============================================
+# ENDPOINTS NAFNET ESPECÍFICOS
+# ===============================================
+
+@router.post("/nafnet/dataset")
+async def generate_nafnet_dataset(
+    source_bucket: str,
+    count: int,
+    task: str = "SIDD-width64",
+    train_val_split: bool = True
+):
+    """Generar dataset estructurado para NAFNet usando RQ"""
+    try:
+        if not RQ_AVAILABLE:
+            raise HTTPException(status_code=503, detail="Sistema RQ no disponible")
+        
+        if not SERVICES_AVAILABLE:
+            raise HTTPException(status_code=503, detail="Servicios de datos sintéticos no disponibles")
+        
+        # Validar parámetros
+        count_limits = SYNTHETIC_DATA_CONFIG.get("COUNT_LIMITS", {"min": 1, "max": 1000})
+        if count < count_limits["min"] or count > count_limits["max"]:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Count debe estar entre {count_limits['min']} y {count_limits['max']}"
+            )
+        
+        # Validar bucket
+        if source_bucket not in BUCKETS.values():
+            raise HTTPException(status_code=400, detail="Bucket no válido")
+        
+        # Enviar job a RQ
+        job_data = {
+            "source_bucket": source_bucket,
+            "count": count,
+            "task": task,
+            "train_val_split": train_val_split,
+            "job_type": "nafnet_dataset_generation"
+        }
+        
+        job_id = job_manager.enqueue_job(
+            'workers.tasks.synthetic_data_tasks.generate_nafnet_dataset_job',
+            job_kwargs=job_data,
+            priority='default'
+        )
+        
+        return JSONResponse({
+            "job_id": job_id,
+            "status": "queued",
+            "requested_count": count,
+            "source_bucket": source_bucket,
+            "task": task,
+            "train_val_split": train_val_split,
+            "message": "Trabajo NAFNet encolado exitosamente",
+            "system": "rq"
+        })
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error iniciando generación NAFNet: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/nafnet/info/{task}")
+async def get_nafnet_dataset_info(task: str):
+    """Obtener información sobre dataset NAFNet existente"""
+    try:
+        if not SERVICES_AVAILABLE:
+            raise HTTPException(status_code=503, detail="Servicios no disponibles")
+        
+        result = synthetic_data_service.get_nafnet_dataset_info(task)
+        
+        if result["status"] == "error":
+            raise HTTPException(status_code=500, detail=result["message"])
+        
+        return JSONResponse(result["dataset_info"])
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error obteniendo info NAFNet: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/nafnet/tasks")
+async def list_nafnet_tasks():
+    """Listar tareas NAFNet disponibles"""
+    try:
+        if not SERVICES_AVAILABLE:
+            raise HTTPException(status_code=503, detail="Servicios no disponibles")
+        
+        return JSONResponse(synthetic_data_service.list_available_nafnet_tasks())
+        
+    except Exception as e:
+        logger.error(f"Error listando tareas NAFNet: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/nafnet/validate/{task}")
+async def validate_nafnet_dataset(task: str):
+    """Validar integridad del dataset NAFNet usando RQ"""
+    try:
+        if not RQ_AVAILABLE:
+            raise HTTPException(status_code=503, detail="Sistema RQ no disponible")
+        
+        # Enviar job de validación a RQ
+        job_data = {
+            "task": task,
+            "job_type": "nafnet_dataset_validation"
+        }
+        
+        job_id = job_manager.enqueue_job(
+            'workers.tasks.synthetic_data_tasks.validate_nafnet_dataset_job',
+            job_kwargs=job_data,
+            priority='default'
+        )
+        
+        return JSONResponse({
+            "job_id": job_id,
+            "status": "queued",
+            "task": task,
+            "message": "Validación NAFNet encolada exitosamente",
+            "system": "rq"
+        })
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error iniciando validación NAFNet: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

@@ -31,6 +31,7 @@ try:
     from config.constants import (
         BUCKETS, 
         SYNTHETIC_DATA_CONFIG, 
+        NAFNET_CONFIG,
         RESPONSE_MESSAGES,
         MINIO_LOCAL_URL
     )
@@ -51,13 +52,23 @@ except ImportError as e:
         "COUNT_LIMITS": {"min": 1, "max": 1000, "augment_min": 10, "augment_max": 10000},
         "BATCH_SIZE": 8
     }
+    NAFNET_CONFIG = {
+        "CORE_NAME": "NAFNet",
+        "CURRENT_TASK": "SIDD-width64",
+        "AVAILABLE_TASKS": {
+            "SIDD-width64": {
+                "degradation_types": ["gaussian_noise", "real_noise", "mixed_noise"],
+                "recommended_intensity": {"min": 0.01, "max": 0.3}
+            }
+        }
+    }
     RESPONSE_MESSAGES = {"synthetic_data_generated": "Datos sintéticos generados exitosamente"}
     MINIO_LOCAL_URL = "http://localhost:9000"
 
 logger = logging.getLogger(__name__)
 
 class SyntheticDataService:
-    """Servicio centralizado para generación de datos sintéticos"""
+    """Servicio centralizado para generación de datos sintéticos con estructura NAFNet"""
     
     def __init__(self):
         self.noise_types = SYNTHETIC_DATA_CONFIG["NOISE_TYPES"]
@@ -65,6 +76,114 @@ class SyntheticDataService:
         self.intensity_range = SYNTHETIC_DATA_CONFIG["INTENSITY_RANGE"]
         self.count_limits = SYNTHETIC_DATA_CONFIG["COUNT_LIMITS"]
         self.batch_size = SYNTHETIC_DATA_CONFIG["BATCH_SIZE"]
+        
+        # Configuración NAFNet
+        self.nafnet_config = NAFNET_CONFIG
+        self.core_name = NAFNET_CONFIG["CORE_NAME"]
+        self.current_task = NAFNET_CONFIG["CURRENT_TASK"]
+        self.available_tasks = NAFNET_CONFIG["AVAILABLE_TASKS"]
+    
+    def _build_nafnet_path(self, task: str, split: str, quality: str) -> str:
+        """
+        Construir path siguiendo estructura NAFNet recomendada
+        
+        Args:
+            task: Tarea NAFNet (ej: "SIDD-width64")
+            split: "train" o "val" 
+            quality: "lq" (low-quality) o "gt" (ground-truth)
+            
+        Returns:
+            String con el path completo
+        """
+        return f"datasets/{self.core_name}/{task}/{split}/{quality}/"
+    
+    def _get_nafnet_degradation_for_task(self, task: str) -> List[str]:
+        """
+        Obtener tipos de degradación específicos para una tarea NAFNet
+        
+        Args:
+            task: Nombre de la tarea NAFNet
+            
+        Returns:
+            Lista de tipos de degradación recomendados
+        """
+        if task in self.available_tasks:
+            return self.available_tasks[task]["degradation_types"]
+        else:
+            # Fallback a degradaciones generales
+            return ["gaussian_noise", "real_noise", "mixed_noise"]
+    
+    def _apply_nafnet_degradation(self, image: np.ndarray, task: str) -> np.ndarray:
+        """
+        Aplicar degradación específica para tarea NAFNet
+        
+        Args:
+            image: Imagen numpy array
+            task: Tarea NAFNet
+            
+        Returns:
+            Imagen degradada según especificaciones de la tarea
+        """
+        degradation_types = self._get_nafnet_degradation_for_task(task)
+        task_config = self.available_tasks.get(task, {})
+        
+        # Obtener intensidad recomendada para la tarea
+        intensity_config = task_config.get("recommended_intensity", {"min": 0.01, "max": 0.3})
+        intensity = np.random.uniform(intensity_config["min"], intensity_config["max"])
+        
+        # Seleccionar degradación aleatoria de las recomendadas para la tarea
+        selected_degradation = np.random.choice(degradation_types)
+        
+        if selected_degradation == "gaussian_noise":
+            return self._apply_noise(image, "gaussian", intensity)
+        elif selected_degradation == "real_noise":
+            return self._apply_noise(image, "speckle", intensity)
+        elif selected_degradation == "mixed_noise":
+            # Aplicar múltiples tipos de ruido
+            noisy = self._apply_noise(image, "gaussian", intensity * 0.6)
+            noisy = self._apply_noise(noisy, "salt_pepper", intensity * 0.4)
+            return noisy
+        elif selected_degradation == "motion_blur":
+            return self._apply_motion_blur(image, intensity)
+        elif selected_degradation == "gaussian_blur":
+            return self._apply_noise(image, "blur", intensity)
+        elif selected_degradation == "downsampling":
+            return self._apply_downsampling(image, intensity)
+        elif selected_degradation == "compression":
+            return self._apply_degradation(image, "compression")
+        else:
+            # Fallback a ruido gaussiano
+            return self._apply_noise(image, "gaussian", intensity)
+    
+    def _apply_motion_blur(self, image: np.ndarray, intensity: float) -> np.ndarray:
+        """Aplicar motion blur específico para GoPro dataset"""
+        # Crear kernel de motion blur
+        size = max(3, int(intensity * 20))
+        if size % 2 == 0:
+            size += 1
+            
+        # Kernel lineal para simular motion blur
+        kernel = np.zeros((size, size))
+        kernel[int((size-1)/2), :] = np.ones(size)
+        kernel = kernel / size
+        
+        return cv2.filter2D(image, -1, kernel)
+    
+    def _apply_downsampling(self, image: np.ndarray, intensity: float) -> np.ndarray:
+        """Aplicar downsampling para super resolution tasks"""
+        h, w = image.shape[:2]
+        
+        # Factor de reducción basado en intensidad
+        scale_factor = max(0.25, 1.0 - intensity)
+        
+        # Reducir resolución
+        new_h, new_w = int(h * scale_factor), int(w * scale_factor)
+        downsampled = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
+        
+        # Volver al tamaño original (simula upsampling de baja calidad)
+        upsampled = cv2.resize(downsampled, (w, h), interpolation=cv2.INTER_LINEAR)
+        
+        return upsampled
     
     def add_noise(self, image_data: bytes, noise_type: str = "gaussian", intensity: float = 0.1) -> Dict[str, Any]:
         """
@@ -279,7 +398,7 @@ class SyntheticDataService:
         try:
             return {
                 "status": "active",
-                "service": "synthetic_data_service",
+                "service": "synthetic_data_service_nafnet",
                 "configuration": {
                     "noise_types": self.noise_types,
                     "degradation_types": self.degradation_types,
@@ -287,10 +406,20 @@ class SyntheticDataService:
                     "count_limits": self.count_limits,
                     "batch_size": self.batch_size
                 },
+                "nafnet_configuration": {
+                    "core_name": self.core_name,
+                    "current_task": self.current_task,
+                    "available_tasks": list(self.available_tasks.keys()),
+                    "dataset_structure": "datasets/{core}/{task}/{split}/{quality}/",
+                    "validation_split": NAFNET_CONFIG["VALIDATION_SPLIT"]
+                },
                 "available_operations": [
                     "add_noise",
-                    "generate_degraded_version",
+                    "generate_degraded_version", 
                     "generate_training_pairs",
+                    "generate_nafnet_training_dataset",
+                    "get_nafnet_dataset_info",
+                    "list_available_nafnet_tasks",
                     "augment_dataset",
                     "get_dataset_stats"
                 ],
@@ -406,17 +535,332 @@ class SyntheticDataService:
     
     # ===== MÉTODOS PARA COMPATIBILIDAD CON CÓDIGO EXISTENTE =====
     
-    def apply_random_degradation(self, image: np.ndarray) -> np.ndarray:
-        """Aplicar degradación aleatoria a una imagen"""
-        import random
+    def generate_nafnet_training_dataset(self, 
+                                        source_bucket: str, 
+                                        count: int,
+                                        task: str = None,
+                                        train_val_split: bool = True) -> Dict[str, Any]:
+        """
+        Generar dataset estructurado para entrenamiento NAFNet
         
-        # Seleccionar degradación aleatoria
-        degradation_types = ["mixed", "blur", "noise", "compression", "distortion", "aging"]
-        selected_degradation = random.choice(degradation_types)
-        
-        return self._apply_degradation(image, selected_degradation)
+        Args:
+            source_bucket: Bucket con imágenes fuente
+            count: Número total de pares a generar
+            task: Tarea NAFNet específica (por defecto usa CURRENT_TASK)
+            train_val_split: Si dividir en train/val automáticamente
+            
+        Returns:
+            Dict con resultados de la generación
+        """
+        try:
+            if not minio_service:
+                raise Exception("Servicio MinIO no disponible")
+            
+            # Usar tarea actual si no se especifica
+            if task is None:
+                task = self.current_task
+            
+            # Validar que la tarea existe
+            if task not in self.available_tasks:
+                raise ValueError(f"Tarea '{task}' no disponible. Tareas disponibles: {list(self.available_tasks.keys())}")
+            
+            # Obtener archivos fuente
+            source_files = minio_service.list_files(source_bucket)
+            if not source_files:
+                raise ValueError(f"No hay archivos en bucket fuente: {source_bucket}")
+            
+            # Calcular splits
+            if train_val_split:
+                train_count = int(count * NAFNET_CONFIG["TRAIN_VAL_RATIO"])
+                val_count = count - train_count
+            else:
+                train_count = count
+                val_count = 0
+            
+            logger.info(f"Generando dataset NAFNet para tarea '{task}': {train_count} train, {val_count} val")
+            
+            # Generar datos de entrenamiento
+            train_result = self._generate_nafnet_split(
+                source_files, source_bucket, task, "train", train_count
+            )
+            
+            # Generar datos de validación si es necesario
+            val_result = {"generated_count": 0, "pairs": []}
+            if val_count > 0:
+                val_result = self._generate_nafnet_split(
+                    source_files, source_bucket, task, "val", val_count
+                )
+            
+            total_generated = train_result["generated_count"] + val_result["generated_count"]
+            
+            return {
+                "status": "success",
+                "task": task,
+                "dataset_structure": self._build_nafnet_path(task, "*", "*"),
+                "total_generated": total_generated,
+                "train": {
+                    "count": train_result["generated_count"],
+                    "pairs": train_result["pairs"]
+                },
+                "val": {
+                    "count": val_result["generated_count"], 
+                    "pairs": val_result["pairs"]
+                },
+                "paths": {
+                    "train_lq": self._build_nafnet_path(task, "train", "lq"),
+                    "train_gt": self._build_nafnet_path(task, "train", "gt"),
+                    "val_lq": self._build_nafnet_path(task, "val", "lq"),
+                    "val_gt": self._build_nafnet_path(task, "val", "gt")
+                }
+            }
+            
+        except Exception as e:
+            logger.error(f"Error generando dataset NAFNet: {e}")
+            return {
+                "status": "error",
+                "message": str(e),
+                "generated_count": 0
+            }
     
-    async def generate_training_pairs_async(self, source_bucket: str, count: int) -> dict:
+    def _generate_nafnet_split(self, 
+                              source_files: List[str], 
+                              source_bucket: str, 
+                              task: str, 
+                              split: str, 
+                              count: int) -> Dict[str, Any]:
+        """
+        Generar split específico (train/val) para dataset NAFNet
+        
+        Args:
+            source_files: Lista de archivos fuente
+            source_bucket: Bucket fuente
+            task: Tarea NAFNet
+            split: "train" o "val"
+            count: Número de pares a generar
+            
+        Returns:
+            Dict con resultado de la generación del split
+        """
+        try:
+            import random
+            
+            # Seleccionar archivos aleatoriamente
+            selected_files = random.sample(source_files, min(len(source_files), count))
+            
+            generated_pairs = []
+            training_bucket = BUCKETS['training']
+            
+            # Construir paths de destino
+            lq_path = self._build_nafnet_path(task, split, "lq")
+            gt_path = self._build_nafnet_path(task, split, "gt")
+            
+            for i, filename in enumerate(selected_files):
+                try:
+                    # Descargar imagen original (ground truth)
+                    gt_data = minio_service.download_file(source_bucket, filename)
+                    
+                    # Decodificar imagen
+                    nparr = np.frombuffer(gt_data, np.uint8)
+                    gt_image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                    
+                    if gt_image is None:
+                        logger.warning(f"No se pudo decodificar {filename}")
+                        continue
+                    
+                    # Aplicar degradación específica para la tarea
+                    lq_image = self._apply_nafnet_degradation(gt_image, task)
+                    
+                    # Generar nombres de archivo únicos
+                    pair_uuid = str(uuid.uuid4())
+                    base_name = f"{split}_{pair_uuid}"
+                    
+                    # Nombres siguiendo convención NAFNet
+                    gt_filename = f"{gt_path}{base_name}_gt.png"
+                    lq_filename = f"{lq_path}{base_name}_lq.png"
+                    
+                    # Codificar imágenes
+                    gt_encoded = cv2.imencode('.png', gt_image)[1].tobytes()
+                    lq_encoded = cv2.imencode('.png', lq_image)[1].tobytes()
+                    
+                    # Subir a MinIO con estructura organizada
+                    minio_service.upload_file(gt_encoded, training_bucket, gt_filename)
+                    minio_service.upload_file(lq_encoded, training_bucket, lq_filename)
+                    
+                    generated_pairs.append({
+                        "pair_id": pair_uuid,
+                        "gt_file": gt_filename,
+                        "lq_file": lq_filename,
+                        "source_file": filename,
+                        "task": task,
+                        "split": split
+                    })
+                    
+                    logger.info(f"Generado par {split} {i+1}/{len(selected_files)}: {base_name}")
+                    
+                except Exception as e:
+                    logger.error(f"Error procesando {filename} para {split}: {e}")
+                    continue
+            
+            logger.info(f"Split {split} completado: {len(generated_pairs)} pares generados")
+            
+            return {
+                "generated_count": len(generated_pairs),
+                "pairs": generated_pairs
+            }
+            
+        except Exception as e:
+            logger.error(f"Error generando split {split}: {e}")
+            return {
+                "generated_count": 0,
+                "pairs": []
+            }
+    
+    def get_nafnet_dataset_info(self, task: str = None) -> Dict[str, Any]:
+        """
+        Obtener información sobre el dataset NAFNet existente
+        
+        Args:
+            task: Tarea específica (opcional)
+            
+        Returns:
+            Dict con información del dataset
+        """
+        try:
+            if task is None:
+                task = self.current_task
+            
+            if not minio_service:
+                return {
+                    "status": "error",
+                    "message": "Servicio MinIO no disponible"
+                }
+            
+            training_bucket = BUCKETS['training']
+            
+            # Contar archivos en cada split y calidad
+            stats = {
+                "task": task,
+                "train": {"lq": 0, "gt": 0},
+                "val": {"lq": 0, "gt": 0},
+                "total_pairs": 0,
+                "structure": {}
+            }
+            
+            # Obtener todos los archivos del bucket de entrenamiento
+            all_files = minio_service.list_files(training_bucket)
+            
+            # Filtrar archivos que pertenecen a esta tarea
+            task_prefix = f"datasets/{self.core_name}/{task}/"
+            task_files = [f for f in all_files if f.startswith(task_prefix)]
+            
+            # Analizar estructura
+            for file_path in task_files:
+                # Extraer componentes del path
+                path_parts = file_path.replace(task_prefix, "").split("/")
+                
+                if len(path_parts) >= 2:
+                    split = path_parts[0]  # train o val
+                    quality = path_parts[1]  # lq o gt
+                    
+                    if split in ["train", "val"] and quality in ["lq", "gt"]:
+                        stats[split][quality] += 1
+            
+            # Calcular pares (el mínimo entre lq y gt por split)
+            train_pairs = min(stats["train"]["lq"], stats["train"]["gt"])
+            val_pairs = min(stats["val"]["lq"], stats["val"]["gt"])
+            stats["total_pairs"] = train_pairs + val_pairs
+            
+            # Información de estructura
+            stats["structure"] = {
+                "train_lq_path": self._build_nafnet_path(task, "train", "lq"),
+                "train_gt_path": self._build_nafnet_path(task, "train", "gt"),
+                "val_lq_path": self._build_nafnet_path(task, "val", "lq"),
+                "val_gt_path": self._build_nafnet_path(task, "val", "gt"),
+                "complete_pairs": {
+                    "train": train_pairs,
+                    "val": val_pairs
+                }
+            }
+            
+            return {
+                "status": "success",
+                "dataset_info": stats
+            }
+            
+        except Exception as e:
+            logger.error(f"Error obteniendo info dataset NAFNet: {e}")
+            return {
+                "status": "error",
+                "message": str(e)
+            }
+    
+    def list_available_nafnet_tasks(self) -> Dict[str, Any]:
+        """
+        Listar todas las tareas NAFNet disponibles y sus configuraciones
+        
+        Returns:
+            Dict con información de tareas disponibles
+        """
+        return {
+            "core_name": self.core_name,
+            "current_task": self.current_task,
+            "available_tasks": self.available_tasks,
+            "dataset_structure_template": "datasets/{core}/{task}/{split}/{quality}/",
+            "example_paths": {
+                "train_lq": self._build_nafnet_path(self.current_task, "train", "lq"),
+                "train_gt": self._build_nafnet_path(self.current_task, "train", "gt"),
+                "val_lq": self._build_nafnet_path(self.current_task, "val", "lq"),
+                "val_gt": self._build_nafnet_path(self.current_task, "val", "gt")
+            }
+        }
+    
+    # ===== MÉTODOS PARA COMPATIBILIDAD CON CÓDIGO EXISTENTE =====
+    
+    def apply_random_degradation(self, image: np.ndarray, task: str = None) -> np.ndarray:
+        """Aplicar degradación aleatoria específica para tarea NAFNet"""
+        if task is None:
+            task = self.current_task
+        return self._apply_nafnet_degradation(image, task)
+    
+    async def generate_training_pairs_async(self, source_bucket: str, count: int, task: str = None) -> dict:
+        """Generar pares de entrenamiento de forma asíncrona con estructura NAFNet"""
+        try:
+            if task is None:
+                task = self.current_task
+                
+            logger.info(f"Generando {count} pares de entrenamiento NAFNet para tarea '{task}' desde {source_bucket}")
+            
+            # Usar el nuevo método de generación NAFNet
+            result = self.generate_nafnet_training_dataset(
+                source_bucket=source_bucket,
+                count=count,
+                task=task,
+                train_val_split=True
+            )
+            
+            if result["status"] == "success":
+                logger.info(f"Generación NAFNet completada: {result['total_generated']} pares creados")
+                
+                return {
+                    "status": "success",
+                    "generated_count": result["total_generated"],
+                    "total_files_created": result["total_generated"] * 2,
+                    "source_bucket": source_bucket,
+                    "task": task,
+                    "structure": result["paths"],
+                    "train_pairs": result["train"]["count"],
+                    "val_pairs": result["val"]["count"]
+                }
+            else:
+                return result
+            
+        except Exception as e:
+            logger.error(f"Error generando pares de entrenamiento NAFNet: {e}")
+            return {
+                "status": "error",
+                "message": str(e),
+                "generated_count": 0
+            }
         """Generar pares de entrenamiento de forma asíncrona - IMPLEMENTACIÓN REAL"""
         try:
             logger.info(f"Generando {count} pares de entrenamiento desde {source_bucket}")
@@ -506,13 +950,33 @@ class SyntheticDataService:
                 "generated_count": 0
             }
     
-    def generate_training_pairs(self, clean_bucket: str, count: int = 10) -> dict:
-        """Generar pares de entrenamiento limpio/degradado"""
+    def generate_training_pairs(self, clean_bucket: str, count: int = 10, task: str = None, use_nafnet_structure: bool = True) -> dict:
+        """
+        Generar pares de entrenamiento limpio/degradado
+        
+        Args:
+            clean_bucket: Bucket con imágenes limpias
+            count: Número de pares a generar
+            task: Tarea NAFNet específica (opcional)
+            use_nafnet_structure: Si usar estructura NAFNet organizada
+            
+        Returns:
+            Dict con resultado de la operación
+        """
         try:
             if not minio_service:
                 raise Exception("Servicio MinIO no disponible")
             
-            # Listar archivos limpios en el bucket especificado
+            # Si se usa estructura NAFNet, delegar al método especializado
+            if use_nafnet_structure:
+                return self.generate_nafnet_training_dataset(
+                    source_bucket=clean_bucket,
+                    count=count,
+                    task=task,
+                    train_val_split=True
+                )
+            
+            # Método legacy para compatibilidad
             clean_files = minio_service.list_files(clean_bucket)
             
             if not clean_files:
@@ -539,7 +1003,7 @@ class SyntheticDataService:
                 clean_filename = f"clean_{pair_id}.png"
                 degraded_filename = f"degraded_{pair_id}.png"
                 
-                # Subir archivos al bucket de entrenamiento
+                # Subir archivos al bucket de entrenamiento (método legacy)
                 minio_service.upload_file(clean_data, BUCKETS['training'], clean_filename)
                 minio_service.upload_file(degraded_result["degraded_data"], BUCKETS['training'], degraded_filename)
                 
@@ -557,7 +1021,8 @@ class SyntheticDataService:
                 "generated_count": len(generated_pairs),
                 "pairs": generated_pairs,
                 "source_bucket": clean_bucket,
-                "total_files_created": len(generated_pairs) * 2
+                "total_files_created": len(generated_pairs) * 2,
+                "structure_type": "legacy"
             }
             
         except Exception as e:
