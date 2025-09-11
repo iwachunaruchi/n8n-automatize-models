@@ -150,7 +150,7 @@ NAFNET_CONFIG = {
             "degradation_types": ["gaussian_noise", "real_noise", "mixed_noise"],
             "recommended_intensity": {"min": 0.01, "max": 0.3},
             "image_size": [256, 256],
-            "dataset_structure": "datasets/{core}/{task}/train/lq|gt, val/lq|gt"
+            "dataset_structure": "document-training/datasets/{core}/{task}/train/lq|gt, val/lq|gt"
         },
         "GoPro": {
             "model_name": "NAFNet-GoPro.pth", 
@@ -158,7 +158,7 @@ NAFNET_CONFIG = {
             "degradation_types": ["motion_blur", "gaussian_blur"],
             "recommended_intensity": {"min": 0.1, "max": 0.8},
             "image_size": [256, 256],
-            "dataset_structure": "datasets/{core}/{task}/train/lq|gt, val/lq|gt"
+            "dataset_structure": "document-training/datasets/{core}/{task}/train/lq|gt, val/lq|gt"
         },
         "FLICKR1024": {
             "model_name": "NAFNet-FLICKR1024.pth",
@@ -166,7 +166,7 @@ NAFNET_CONFIG = {
             "degradation_types": ["downsampling", "compression", "blur"],
             "recommended_intensity": {"min": 0.1, "max": 0.5},
             "image_size": [512, 512],
-            "dataset_structure": "datasets/{core}/{task}/train/lq|gt, val/lq|gt"
+            "dataset_structure": "document-training/datasets/{core}/{task}/train/lq|gt, val/lq|gt"
         }
     },
     "CURRENT_TASK": "SIDD-width64",  # Tarea actualmente en uso

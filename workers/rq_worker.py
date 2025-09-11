@@ -35,12 +35,28 @@ def setup_worker():
         from rq import Worker, Queue
         from rq.worker import SimpleWorker  # Worker sin fork para Windows
         
+        # Clase de timeout personalizada para Windows que no hace nada
+        class WindowsNoOpTimeout:
+            def __init__(self, timeout, exception_class, job_id=None):
+                self.timeout = timeout
+                self.exception_class = exception_class
+                self.job_id = job_id
+            
+            def __enter__(self):
+                return self
+            
+            def __exit__(self, exc_type, exc_val, exc_tb):
+                pass
+        
         # Configuración Redis
         redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
         redis_conn = Redis.from_url(redis_url)
         
-        # Configuración del worker
-        worker_name = os.getenv('RQ_WORKER_NAME', 'doc-restoration-worker')
+        # Configuración del worker con timestamp para evitar conflictos
+        import time
+        timestamp = int(time.time())
+        default_name = f'doc-restoration-worker-{timestamp}'
+        worker_name = os.getenv('RQ_WORKER_NAME', default_name)
         queue_names = os.getenv('RQ_QUEUE_NAMES', 'high,default,low').split(',')
         
         # Detectar sistema operativo
@@ -56,14 +72,16 @@ def setup_worker():
         
         # Crear worker con configuración específica del SO
         if is_windows:
-            # Usar SimpleWorker para Windows (sin fork)
+            # Usar SimpleWorker para Windows con timeout personalizado
             worker = SimpleWorker(
                 queues,
                 connection=redis_conn,
                 name=worker_name,
                 default_result_ttl=3600
             )
-            logger.info("🪟 Usando SimpleWorker para Windows (sin fork)")
+            # Asignar la clase de timeout personalizada para Windows
+            worker.death_penalty_class = WindowsNoOpTimeout
+            logger.info("🪟 Usando SimpleWorker para Windows (con timeout personalizado)")
         else:
             # Usar Worker normal para Linux/Unix
             worker = Worker(
