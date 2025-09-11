@@ -143,7 +143,8 @@ async def start_layer2_training(
                 "num_epochs": request.num_epochs,
                 "max_pairs": request.max_pairs,
                 "batch_size": request.batch_size,
-                "use_training_bucket": request.use_training_bucket,
+                "task": request.task,
+                "use_nafnet_structure": request.use_nafnet_structure,
                 "use_finetuning": request.use_finetuning,
                 "freeze_backbone": request.freeze_backbone,
                 "finetuning_lr_factor": request.finetuning_lr_factor
@@ -174,12 +175,13 @@ async def start_layer2_training(
                 "num_epochs": request.num_epochs,
                 "max_pairs": request.max_pairs,
                 "batch_size": request.batch_size,
-                "use_training_bucket": request.use_training_bucket,
+                "task": request.task,
+                "use_nafnet_structure": request.use_nafnet_structure,
                 "use_finetuning": request.use_finetuning,
                 "freeze_backbone": request.freeze_backbone,
                 "finetuning_lr_factor": request.finetuning_lr_factor,
-                "data_source": "document-training bucket" if request.use_training_bucket else "separate buckets",
-                "pretrained_model": "NAFNet-SIDD-width64" if request.use_finetuning else "None"
+                "data_source": "NAFNet structure" if request.use_nafnet_structure else "legacy structure",
+                "pretrained_model": f"NAFNet-{request.task}" if request.use_finetuning else "None"
             },
             "check_status_url": f"/training/status/{job_id}"
         })

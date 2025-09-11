@@ -21,7 +21,9 @@ from .training_tasks import (
 from .synthetic_data_tasks import (
     generate_synthetic_data_job,
     augment_dataset_job,
-    validate_synthetic_data_job
+    validate_synthetic_data_job,
+    generate_nafnet_dataset_job,
+    validate_nafnet_dataset_job
 )
 
 from .restoration_tasks import (
@@ -48,6 +50,8 @@ AVAILABLE_TASKS = {
     'generate_synthetic_data': generate_synthetic_data_job,
     'augment_dataset': augment_dataset_job,
     'validate_synthetic_data': validate_synthetic_data_job,
+    'generate_nafnet_dataset': generate_nafnet_dataset_job,
+    'validate_nafnet_dataset': validate_nafnet_dataset_job,
     
     # Restoration Tasks
     'restore_document': single_document_restoration_job,
@@ -98,7 +102,9 @@ def get_task_info():
         'synthetic_data_tasks': {
             'generate_synthetic_data': 'Generación de datos sintéticos',
             'augment_dataset': 'Aumento de dataset existente',
-            'validate_synthetic_data': 'Validación de calidad de datos sintéticos'
+            'validate_synthetic_data': 'Validación de calidad de datos sintéticos',
+            'generate_nafnet_dataset': 'Generación de dataset NAFNet estructurado',
+            'validate_nafnet_dataset': 'Validación de dataset NAFNet'
         },
         'restoration_tasks': {
             'restore_document': 'Restauración de documento individual',

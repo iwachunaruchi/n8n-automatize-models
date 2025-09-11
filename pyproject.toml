@@ -73,6 +73,7 @@ psutil = "*"
 
 # Deep Learning Visualization
 tensorboard = "*"
+logging = "^0.4.9.6"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.0.0"
