@@ -21,6 +21,16 @@ sys.path.append('/app')
 sys.path.append('/app/api')
 sys.path.append('/app/project_root')
 
+# IMPORTANTE: Importar todas las tareas para que RQ las pueda encontrar
+try:
+    import workers.rq_tasks  # Esto registra todas las tareas
+    from workers.tasks import *  # Importar todas las tareas específicas
+    logger = logging.getLogger(__name__)
+    logger.info("✅ Tareas RQ importadas correctamente")
+except Exception as e:
+    logger = logging.getLogger(__name__)
+    logger.error(f"❌ Error importando tareas RQ: {e}")
+
 # Configurar logging
 logging.basicConfig(
     level=logging.INFO,
@@ -52,7 +62,7 @@ def setup_worker():
         redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
         redis_conn = Redis.from_url(redis_url)
         
-        # Configuración del worker con timestamp para evitar conflictos
+        # Configuración del worker con nombre fijo y único por máquina
         import time
         timestamp = int(time.time())
         default_name = f'doc-restoration-worker-{timestamp}'
@@ -130,6 +140,14 @@ def main():
         logger.info(f"🔧 Worker configurado: {worker.name}")
         logger.info(f"📋 Colas asignadas: {[q.name for q in worker.queues]}")
         logger.info(f"⏰ Resultado TTL: {worker.default_result_ttl}s")
+        
+        # Verificar que las tareas están disponibles
+        try:
+            import workers.rq_tasks
+            available_tasks = workers.rq_tasks.get_all_tasks()
+            logger.info(f"📦 Tareas disponibles: {list(available_tasks.keys())}")
+        except Exception as e:
+            logger.warning(f"⚠️ No se pudieron listar tareas: {e}")
         
         # Mostrar estadísticas iniciales
         from rq_job_system import get_job_queue_manager
